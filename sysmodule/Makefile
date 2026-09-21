@@ -12,9 +12,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	qqmusic
 BUILD		:=	build
-SOURCES		:=	source
+# M1：source（主+服务）+ source/impl（播放引擎）+ ../common（sdmc/pm/config/minIni）
+SOURCES		:=	source source/impl source/impl/resamplers \
+			../common/sdmc ../common/pm ../common/config ../common/minIni
 DATA		:=
-INCLUDES	:=	../common/ipc
+INCLUDES	:=	../common ../common/ipc
 
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
@@ -22,7 +24,7 @@ ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS	:=	-flto=auto -g -Wall -O2 -ffunction-sections \
 			$(ARCH) $(DEFINES)
 
-CFLAGS	+=	$(INCLUDE) -DQQMUSIC_API_VERSION=$(API_VERSION) -DNDEBUG=1
+CFLAGS	+=	$(INCLUDE) -DNDEBUG=1 -DWANT_MP3 -DWANT_FLAC -DWANT_WAV
 
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=c++20
 
