@@ -1,0 +1,26 @@
+# 构建产物
+build/
+**/build/
+release/
+debug/
+*.o
+*.elf
+*.nro
+*.nso
+*.nsp
+*.npdm
+*.nacp
+*.map
+*.hlog
+*.log
+
+# 分发
+dist/
+
+# nxExt 静态库
+sysmodule/nxExt/lib/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
