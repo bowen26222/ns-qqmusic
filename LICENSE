@@ -1,0 +1,54 @@
+# Non-Commercial No-Attribution License (NC-NA License)
+# 非商业用途·无需署名·允许二次开发开源许可证
+
+版权所有 (c) 2026 Bowen (bowen26222)
+Copyright (c) 2026 Bowen (bowen26222)
+
+特此免费授予任何获得本软件及相关文档文件（下称“本软件”）副本的人处理本软件的权利，包括但不限于使用、复制、修改、合并、发布、分发、再许可本软件的权利，但须遵守以下严格条件：
+
+### 1. 允许二次开发与修改 (Modifications & Derivative Works Permitted)
+任何人均可自由修改、扩充、重构本软件，或基于本软件开展任何形式的二次开发与衍生创作。
+
+### 2. 严禁商业化使用 (Strictly Non-Commercial Use Only)
+本软件及其所有修改版本、衍生作品、二次开发代码或二次开发编译产物，**均严禁以任何直接或间接的形式用于商业目的**。
+禁止行为包括但不限于：
+- 直接或间接售卖本软件或基于本软件的任何二次开发版本；
+- 将本软件或其衍生版本集成入收费软件、收费服务、付费会员功能或硬件捆绑销售；
+- 利用本软件或其二次开发版本进行任何形式的盈利、收费分发或商业变现。
+
+### 3. 无需署名 (No Attribution Required)
+在严格遵守上述非商业限制的前提下，任何人均可自由使用、修改或分发本软件，**无需**在软件界面、文档或衍生版本中保留或展示原作者姓名、版权声明或致谢信息。
+
+---
+
+### 免责声明 (Disclaimer)
+
+本软件按“现状”提供，不提供任何明示或暗示的保证，包括但不限于对适销性、特定用途适用性和非侵权性的保证。在任何情况下，原作者或版权持有人均不对因本软件、二次开发版本或使用本软件引起的任何索赔、损害赔偿或其他责任承担责任，无论是因合同、侵权还是其他原因引起的。
+
+---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, and/or sublicense copies of
+the Software, subject to the following conditions:
+
+1. Modifications and Derivative Works Permitted:
+   Anyone is permitted to modify, adapt, extend, and develop derivative works based on the Software.
+
+2. Strictly Non-Commercial Use:
+   Neither the Software, nor any portion thereof, nor any derivative works, modifications, or
+   secondary developments based upon the Software, may be used for any commercial purpose, sold,
+   monetized, or bundled with commercial products or paid services in any form, directly or indirectly.
+
+3. No Attribution Required:
+   You may use, distribute, or modify the Software without any requirement to retain or display
+   author attribution, copyright notices, or acknowledgments.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
