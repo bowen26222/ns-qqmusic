@@ -23,13 +23,3 @@ public:
                      HidAnalogStickState leftJoyStick, HidAnalogStickState rightJoyStick) override;
 };
 
-class OsdLyricGui final : public tsl::Gui {
-public:
-    OsdLyricGui();
-    ~OsdLyricGui() override;
-
-    tsl::elm::Element *createUI() override;
-    void update() override;
-    bool handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &touchPos,
-                     HidAnalogStickState leftJoyStick, HidAnalogStickState rightJoyStick) override;
-};

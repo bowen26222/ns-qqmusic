@@ -90,6 +90,8 @@ class QqMusicOverlay final : public tsl::Overlay {
         tsl::highlightColor2 = {0x0, 0xA, 0xD, 0xF};
         tsl::clickColor      = {0x0, 0xA, 0xD, 0x7};
         disableJumpTo        = true;
+        FullMode             = true;
+        deactivateOriginalFooter = false;
 
         // 重试 10s；分别保留连接/拉起/GetApiVersion 的实际失败阶段。
         Result rc = 0xFF;

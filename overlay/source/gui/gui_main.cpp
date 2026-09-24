@@ -31,8 +31,8 @@ tsl::elm::Element *MainGui::createUI() {
         return false;
     });
     list->addItem(queue_button);
-    /* 实时悬浮歌词：全屏动态滚动歌词、点句即播、精简悬浮窗。 */
-    auto lyric_button = new tsl::elm::ListItem("实时悬浮歌词", "全屏动态滚动歌词 · 点句即播");
+    /* 实时歌词：全屏动态滚动歌词、点句即播、左右摇杆下压(L3+R3)返回。 */
+    auto lyric_button = new tsl::elm::ListItem("实时歌词", "全屏动态滚动歌词 · 点句即播");
     lyric_button->setClickListener([](u64 keys) {
         if (keys & HidNpadButton_A) {
             tsl::changeTo<LyricGui>();
@@ -41,17 +41,6 @@ tsl::elm::Element *MainGui::createUI() {
         return false;
     });
     list->addItem(lyric_button);
-    /* 游戏悬浮歌词 (OSD)：常驻半透明悬浮歌词条，完全释放游戏手柄控制 */
-    auto osd_button = new tsl::elm::ListItem("游戏悬浮歌词 (OSD)", "游戏中常驻半透明歌词 · 畅玩游戏不占手柄");
-    osd_button->setClickListener([](u64 keys) {
-        if (keys & HidNpadButton_A) {
-            tsl::changeTo<OsdLyricGui>();
-            return true;
-        }
-        return false;
-    });
-    list->addItem(osd_button);
-
 
     /* QQ 音乐在线：扫码登录、曲库搜索、榜单推荐。 */
     auto online_button = new tsl::elm::ListItem("QQ音乐在线");

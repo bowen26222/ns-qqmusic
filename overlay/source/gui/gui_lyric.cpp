@@ -251,7 +251,10 @@ namespace {
                 return true;
             }
             if (keys & HidNpadButton_X) {
-                tsl::changeTo<OsdLyricGui>();
+                m_floating_mode = !m_floating_mode;
+                if (m_frame)
+                    m_frame->setToast(m_floating_mode ? "已切换为精简单行" : "已切换为全屏多行",
+                                      m_floating_mode ? "大字单行展示" : "多行沉浸式滚动");
                 return true;
             }
             if (keys & HidNpadButton_A) {
@@ -348,179 +351,9 @@ void LyricGui::update() {
 bool LyricGui::handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
     const bool isStickL = (keysDown & HidNpadButton_StickL) || (keysHeld & HidNpadButton_StickL);
     const bool isStickR = (keysDown & HidNpadButton_StickR) || (keysHeld & HidNpadButton_StickR);
-    if (isStickL && isStickR) {
-        tsl::changeTo<MainGui>();
-        return true;
-    }
-    if (keysDown & HidNpadButton_B) {
+    if ((isStickL && isStickR) || (keysDown & HidNpadButton_B)) {
         tsl::goBack();
         return true;
     }
-    return false;
-}
-
-namespace {
-    class OsdLyricElement final : public tsl::elm::Element {
-    private:
-        qqmusic::LyricParser m_parser;
-        char m_loaded_path[FS_MAX_PATH]{};
-        bool m_lyric_loaded = false;
-        u16 m_cooldown = 0;
-        u8 m_retry = 0;
-        std::string m_title;
-        QqMusicCurrentTrack m_track{};
-
-        void LoadTrackLyric(const char *path) {
-            m_parser.Clear();
-            m_lyric_loaded = false;
-
-            if (!path || !path[0]) {
-                m_loaded_path[0] = '\0';
-                m_title = "未选择曲目";
-                return;
-            }
-
-            QqMusicTrackMeta meta{};
-            if (R_SUCCEEDED(qqmusicGetTrackMeta(QQMUSIC_TRACKMETA_CURRENT, &meta)) && meta.valid && meta.title[0]) {
-                m_title = meta.title;
-            } else {
-                m_title = "正在播放";
-            }
-
-            if (m_retry >= 20) {
-                m_cooldown = 180;
-                return;
-            }
-
-            char name[96] = {};
-            if (R_SUCCEEDED(qqmusicEnsureLyric(path, name, sizeof(name))) && name[0]) {
-                char file_path[160];
-                std::snprintf(file_path, sizeof(file_path), "/qqmusic-cache/%s", name);
-                std::string lrc_text;
-                if (ReadSdText(file_path, lrc_text) && !lrc_text.empty()) {
-                    m_lyric_loaded = m_parser.Parse(lrc_text);
-                    if (m_lyric_loaded) {
-                        std::snprintf(m_loaded_path, sizeof(m_loaded_path), "%s", path);
-                        m_retry = 0;
-                        m_cooldown = 0;
-                        return;
-                    }
-                }
-            }
-            m_retry++;
-            m_cooldown = 30;
-        }
-
-    public:
-        OsdLyricElement() = default;
-
-        void draw(tsl::gfx::Renderer *renderer) override {
-            // 全屏填充 100% 透明，让底层游戏画面完全透出
-            renderer->fillScreen({0x0, 0x0, 0x0, 0x0});
-
-            QqMusicCurrentTrack track{};
-            if (R_SUCCEEDED(qqmusicGetCurrentTrack(&track))) {
-                m_track = track;
-                if (std::strcmp(m_loaded_path, track.path) != 0) {
-                    m_retry = 0;
-                    m_cooldown = 0;
-                    LoadTrackLyric(track.path);
-                } else if (!m_lyric_loaded) {
-                    if (m_cooldown > 0) m_cooldown--;
-                    else LoadTrackLyric(track.path);
-                }
-            }
-
-            const s32 pill_w = 400;
-            const s32 pill_h = 46;
-            const s32 pill_x = (tsl::cfg::FramebufferWidth - pill_w) / 2;
-            const s32 pill_y = 16;
-
-            // 悬浮药丸胶囊：深色半透明黑色磨砂 + 细微高亮顶边
-            renderer->drawRect(pill_x, pill_y, pill_w, pill_h, tsl::Color{0x0, 0x0, 0x1, 0xC});
-            renderer->drawRect(pill_x + 1, pill_y, pill_w - 2, 2, tsl::Color{0x0, 0xD, 0xF, 0xF});
-
-            // 音符指示标
-            renderer->drawString("\uE098", false, pill_x + 14, pill_y + 30, 20, tsl::Color{0x0, 0xD, 0xF, 0xF});
-
-            if (!m_track.path[0]) {
-                renderer->drawString("QQ音乐 · 暂未播放", false, pill_x + 40, pill_y + 30, 18, tsl::Color{0x8, 0x8, 0x9, 0xF}, pill_w - 50);
-                return;
-            }
-
-            if (!m_lyric_loaded || m_parser.IsEmpty()) {
-                std::string txt = m_title.empty() ? "正在播放" : m_title;
-                txt += " · 获取歌词中...";
-                renderer->drawString(txt.c_str(), false, pill_x + 40, pill_y + 30, 18, tsl::Color{0xC, 0xC, 0xD, 0xF}, pill_w - 50);
-                return;
-            }
-
-            const u32 current_ms = (m_track.sample_rate > 0)
-                ? (u32)((u64)m_track.current_frame * 1000 / m_track.sample_rate) : 0;
-            const int active_idx = m_parser.GetCurrentIndex(current_ms);
-
-            std::string line_text;
-            if (active_idx < 0) {
-                line_text = m_title + " (前奏)";
-            } else {
-                const auto &l = m_parser.GetLine((size_t)active_idx);
-                line_text = l.text.empty() ? "(音乐过门)" : l.text;
-            }
-
-            renderer->drawString(line_text.c_str(), false, pill_x + 40, pill_y + 30, 18, tsl::Color{0xF, 0xF, 0xF, 0xF}, pill_w - 110);
-            renderer->drawString("L3+R3", false, pill_x + pill_w - 55, pill_y + 30, 13, tsl::Color{0x7, 0x8, 0x9, 0xF});
-        }
-        void layout(u16 parentX, u16 parentY, u16 parentWidth, u16 parentHeight) override {
-            setBoundaries(parentX, parentY, parentWidth, parentHeight);
-        }
-
-
-        bool onTouch(tsl::elm::TouchEvent event, s32 currX, s32 currY, s32, s32, s32, s32) override {
-            if (event != tsl::elm::TouchEvent::Release) return false;
-            const s32 pill_w = 400;
-            const s32 pill_h = 56;
-            const s32 pill_x = (tsl::cfg::FramebufferWidth - pill_w) / 2;
-            const s32 pill_y = 10;
-            // 触摸悬浮药丸：立即切回主菜单
-            if (currX >= pill_x && currX <= pill_x + pill_w && currY >= pill_y && currY <= pill_y + pill_h) {
-                tsl::changeTo<MainGui>();
-                return true;
-            }
-            return false;
-        }
-    };
-} // namespace
-
-OsdLyricGui::OsdLyricGui() {
-    lastMode = "mini";
-    FullMode = false;
-    deactivateOriginalFooter = true;
-    TeslaFPS = 15;
-    tsl::hlp::requestForeground(false);
-}
-
-OsdLyricGui::~OsdLyricGui() {
-    lastMode = "full";
-    FullMode = true;
-    deactivateOriginalFooter = false;
-    TeslaFPS = 60;
-    tsl::hlp::requestForeground(true);
-}
-
-tsl::elm::Element *OsdLyricGui::createUI() {
-    return new OsdLyricElement();
-}
-
-void OsdLyricGui::update() {
-}
-
-bool OsdLyricGui::handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
-    const bool isStickL = (keysDown & HidNpadButton_StickL) || (keysHeld & HidNpadButton_StickL);
-    const bool isStickR = (keysDown & HidNpadButton_StickR) || (keysHeld & HidNpadButton_StickR);
-    if (isStickL && isStickR) {
-        tsl::changeTo<MainGui>();
-        return true;
-    }
-    // OSD 悬浮模式下绝不拦截 B 键，100% 留给游戏控制（跳跃/攻击/取消），绝不冲突卡死！
     return false;
 }

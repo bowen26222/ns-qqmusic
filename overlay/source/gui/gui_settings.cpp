@@ -137,15 +137,6 @@ tsl::elm::Element *SettingsGui::createUI() {
     });
     m_list->addItem(seek_item);
     m_list->addItem(new ElmVolume("\uE13C", "音乐音量", frame, qqmusicGetVolume, qqmusicSetVolume));
-    auto osd_item = new tsl::elm::ListItem("游戏悬浮歌词 (OSD)", "开启半透明悬浮歌词 · 左右摇杆下压(L3+R3)返回");
-    osd_item->setClickListener([](u64 keys) {
-        if (keys & HidNpadButton_A) {
-            tsl::changeTo<OsdLyricGui>();
-            return true;
-        }
-        return false;
-    });
-    m_list->addItem(osd_item);
 
     // ---- 在线列表排序 ----
     static const char *kSortNames[] = { "默认", "按字母 A-Z" };
