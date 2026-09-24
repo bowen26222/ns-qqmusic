@@ -665,6 +665,17 @@ std::unique_ptr<Source> OpenFile(const char *path, const SourceIoRequest &reques
             media_mid = s;
         }
         if (media_mid.empty()) media_mid = songmid;
+        // 1) 本地缓存优先：命中则完全不联网（断网可放，且没有网络抖动导致的断流）。
+        std::string cached;
+        if (qqmusic::songcache::Lookup(songmid, cached)) {
+            FsFile cached_file;
+            if (R_SUCCEEDED(sdmc::OpenFile(&cached_file, cached.c_str()))) {
+                const std::string msg = "SYS OpenFile cache hit: " + songmid + "\n";
+                sysLog(msg.c_str());
+                return make_decoder(SourceType::MP3, MakeFileBackend(std::move(cached_file)));
+            }
+        }
+
         std::string play_url = qqmusic::api::GetSongPlayUrl(songmid, media_mid);
         if (play_url.empty() && !request.Cancelled()) {
             svcSleepThread(250'000'000ull);
@@ -677,17 +688,6 @@ std::unique_ptr<Source> OpenFile(const char *path, const SourceIoRequest &reques
             std::snprintf(b, sizeof(b), "SYS OpenFile GetSongPlayUrl empty: %s\n", songmid.c_str());
             sysLog(b);
             return nullptr;
-        }
-
-        // 1) 本地缓存优先：命中则完全不联网（断网可放，且没有网络抖动导致的断流）。
-        std::string cached;
-        if (qqmusic::songcache::Lookup(songmid, cached)) {
-            FsFile cached_file;
-            if (R_SUCCEEDED(sdmc::OpenFile(&cached_file, cached.c_str()))) {
-                const std::string msg = "SYS OpenFile cache hit: " + songmid + "\n";
-                sysLog(msg.c_str());
-                return make_decoder(SourceType::MP3, MakeFileBackend(std::move(cached_file)));
-            }
         }
 
         // 2) 未命中：边下边存，听完自动落盘，下次播放即走本地。

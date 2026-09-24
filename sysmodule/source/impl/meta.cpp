@@ -686,6 +686,14 @@ static void FetchLyricFileBlocking(const char *path) {
             } else {
                 sdmc::DeleteFile(cache_lrc.c_str());
             }
+        } else {
+            // 负缓存（占位文件）：防止上游无歌词或 404 时后台陷入无限重试死循环
+            static const char kNoLyricTag[] = "[00:00.00]纯音乐 / 暂无歌词\n";
+            sdmc::CreateFolder("/qqmusic-cache");
+            sdmc::WriteFile(cache_lrc.c_str(), kNoLyricTag, sizeof(kNoLyricTag) - 1);
+            char b[128];
+            std::snprintf(b, sizeof(b), "SYS lyric placeholder stored: %s\n", key.c_str());
+            sysLog(b);
         }
     } else {
         std::string local_path(path);

@@ -1036,14 +1036,26 @@ std::string GetSongPlayUrl(const std::string &songmid, const std::string &media_
 
     auto resp = net::Post("https://u.y.qq.com/cgi-bin/musicu.fcg", json_ss.str(),
                           {"Content-Type: application/json", "Referer: https://y.qq.com/"}, BuildCookieHeader(), 8);
-    if (!resp.ok() || resp.body.empty()) {
-        return "";
+    if (resp.ok() && !resp.body.empty()) {
+        std::string purl = ExtractField(resp.body, "\"purl\":\"");
+        if (!purl.empty()) {
+            return "http://dl.stream.qqmusic.qq.com/" + purl;
+        }
     }
 
-    std::string purl = ExtractField(resp.body, "\"purl\":\"");
-    if (!purl.empty()) {
-        // 绝不使用 aqqmusic.tc.qq.com（会报 403 Forbidden Error: -1031），必须直连官方音频主流节点！
-        return "http://dl.stream.qqmusic.qq.com/" + purl;
+    // 兜底尝试 RS02 官方试听音轨（对于 VIP/受限歌曲，提供高音质试听流，绝不直接打崩队列）
+    const std::string try_filename = "RS02" + songmid + ".mp3";
+    std::ostringstream try_ss;
+    try_ss << "{\"comm\":{\"ct\":24,\"cv\":0,\"format\":\"json\",\"uin\":\"0\"},\"req\":{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{\"guid\":\""
+           << guid_str << "\",\"songmid\":[" << JsonEscape(songmid) << "],\"filename\":[" << JsonEscape(try_filename)
+           << "],\"songtype\":[0],\"uin\":\"0\",\"loginflag\":1,\"platform\":\"20\"}}}";
+    auto try_resp = net::Post("https://u.y.qq.com/cgi-bin/musicu.fcg", try_ss.str(),
+                              {"Content-Type: application/json", "Referer: https://y.qq.com/"}, "", 6);
+    if (try_resp.ok() && !try_resp.body.empty()) {
+        std::string purl = ExtractField(try_resp.body, "\"purl\":\"");
+        if (!purl.empty()) {
+            return "http://dl.stream.qqmusic.qq.com/" + purl;
+        }
     }
     return "";
 }

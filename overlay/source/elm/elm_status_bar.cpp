@@ -232,9 +232,10 @@ void StatusBar::RefreshLyric() {
 
     if (!this->m_lyric_available) {
         this->m_lyric_retry++;
-        this->m_lyric_cooldown = 30; // 30 帧（0.5秒）后重试
-        if (this->m_lyric_retry >= 40)
-            this->m_lyric_cooldown = 300; // 20秒后放宽至 5 秒轮询一次
+        if (this->m_lyric_retry >= 20)
+            this->m_lyric_cooldown = 300; // 停止频繁轮询，改为 5 秒一次
+        else
+            this->m_lyric_cooldown = 30;
     }
 }
 
