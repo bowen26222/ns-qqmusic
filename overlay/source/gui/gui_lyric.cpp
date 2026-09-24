@@ -18,7 +18,8 @@ namespace {
         bool ok = false;
         if (R_SUCCEEDED(fsFsOpenFile(&fs, path, FsOpenMode_Read, &f))) {
             s64 sz = 0;
-            if (R_SUCCEEDED(fsFileGetSize(&f, &sz)) && sz > 0 && sz < 256 * 1024) {
+            // 歌词文本硬上限 48KB：彻底杜绝大文件打爆内存
+            if (R_SUCCEEDED(fsFileGetSize(&f, &sz)) && sz > 0 && sz <= 48 * 1024) {
                 out_text.resize((size_t)sz);
                 u64 got = 0;
                 if (R_SUCCEEDED(fsFileRead(&f, 0, out_text.data(), (u64)sz, 0, &got)) && got == (u64)sz) {
@@ -38,22 +39,25 @@ namespace {
         qqmusic::LyricParser m_parser;
         char m_loaded_path[FS_MAX_PATH]{};
         bool m_lyric_loaded = false;
-        bool m_floating_mode = false;     // 精简悬浮条模式
+        bool m_floating_mode = false;     // 精简单行显示模式
         int m_manual_offset = 0;          // 手动翻阅偏差行数
         u32 m_manual_timer = 0;           // 手动翻阅倒计时（数秒后自动归位）
+        u16 m_cooldown = 0;               // 异步拉取重试倒计时
+        bool m_touch_down = false;        // 触摸在内部按下标志
+        s32 m_touch_start_y = 0;
         std::string m_title;
         std::string m_artist;
         QqMusicCurrentTrack m_track{};
         QqMusicOverlayFrame *m_frame = nullptr;
 
         void LoadTrackLyric(const char *path) {
-            std::snprintf(m_loaded_path, sizeof(m_loaded_path), "%s", path);
             m_parser.Clear();
             m_lyric_loaded = false;
             m_manual_offset = 0;
             m_manual_timer = 0;
 
             if (!path || !path[0]) {
+                m_loaded_path[0] = '\0';
                 m_title = "未选择曲目";
                 m_artist = "";
                 return;
@@ -78,8 +82,15 @@ namespace {
                 std::string lrc_text;
                 if (ReadSdText(file_path, lrc_text) && !lrc_text.empty()) {
                     m_lyric_loaded = m_parser.Parse(lrc_text);
+                    if (m_lyric_loaded) {
+                        std::snprintf(m_loaded_path, sizeof(m_loaded_path), "%s", path);
+                        return;
+                    }
                 }
             }
+
+            // 未成功加载时，每 30 帧（约 0.5s）轮询一次后台下载结果，绝不死锁或永久锁死失败状态
+            m_cooldown = 30;
         }
 
     public:
@@ -94,7 +105,11 @@ namespace {
             if (R_SUCCEEDED(qqmusicGetCurrentTrack(&track))) {
                 m_track = track;
                 if (std::strcmp(m_loaded_path, track.path) != 0) {
-                    LoadTrackLyric(track.path);
+                    if (m_cooldown > 0) {
+                        m_cooldown--;
+                    } else {
+                        LoadTrackLyric(track.path);
+                    }
                 }
             }
             if (m_manual_timer > 0) {
@@ -127,10 +142,18 @@ namespace {
             const u32 current_ms = (m_track.sample_rate > 0)
                 ? (u32)((u64)m_track.current_frame * 1000 / m_track.sample_rate) : 0;
             const int active_idx = m_parser.GetCurrentIndex(current_ms);
+
+            // 前奏阶段（active_idx == -1）
+            if (active_idx < 0) {
+                const s32 bar_y = y + h / 2 - 35;
+                renderer->drawString("\uE098 (音乐前奏)", false, x + 30, bar_y + 40, 22, tsl::Color{0x0, 0xD, 0xF, 0xF});
+                return;
+            }
+
             const int target_center = std::clamp(active_idx + m_manual_offset, 0, (int)m_parser.LineCount() - 1);
 
             if (m_floating_mode) {
-                // ---- 精简悬浮条模式 (Floating Bar) ----
+                // ---- 精简单行显示模式 (Single Line Bar) ----
                 const s32 bar_h = 70;
                 const s32 bar_y = y + h / 2 - 35;
                 renderer->drawRect(x + 12, bar_y, w - 24, bar_h, tsl::Color{0x1, 0x1, 0x2, 0xF});
@@ -189,7 +212,8 @@ namespace {
         }
 
         void layout(u16 parentX, u16 parentY, u16 parentWidth, u16 parentHeight) override {
-            setBoundaries(parentX, parentY, parentWidth, parentHeight);
+            // 严防 Element::invalidate 错误覆盖为全屏：严格使用 QqMusicOverlayFrame 内缩安全边界
+            setBoundaries(parentX + 35, parentY + 95, parentWidth - 85, parentHeight - 73 - 95);
         }
 
         bool onClick(u64 keys) override {
@@ -216,8 +240,8 @@ namespace {
             if (keys & HidNpadButton_X) {
                 m_floating_mode = !m_floating_mode;
                 if (m_frame)
-                    m_frame->setToast(m_floating_mode ? "已切换为精简悬浮窗" : "已切换为全屏滚动歌词",
-                                      m_floating_mode ? "大字单行悬浮展示" : "多行沉浸式平滑跟随");
+                    m_frame->setToast(m_floating_mode ? "已切换为精简单行" : "已切换为全屏滚动",
+                                      m_floating_mode ? "大字单行展示" : "多行沉浸式平滑跟随");
                 return true;
             }
             if (keys & HidNpadButton_A) {
@@ -225,16 +249,21 @@ namespace {
                 if (m_lyric_loaded && !m_parser.IsEmpty() && m_track.sample_rate > 0) {
                     const u32 current_ms = (u32)((u64)m_track.current_frame * 1000 / m_track.sample_rate);
                     const int active_idx = m_parser.GetCurrentIndex(current_ms);
-                    const int target_idx = std::clamp(active_idx + m_manual_offset, 0, (int)m_parser.LineCount() - 1);
+                    const int base_idx = (active_idx >= 0) ? active_idx : 0;
+                    const int target_idx = std::clamp(base_idx + m_manual_offset, 0, (int)m_parser.LineCount() - 1);
                     const u32 target_ms = m_parser.GetLine((size_t)target_idx).time_ms;
                     const u32 target_frame = (u32)((u64)target_ms * m_track.sample_rate / 1000);
-                    qqmusicSeek(target_frame);
-                    m_manual_offset = 0;
-                    m_manual_timer = 0;
-                    if (m_frame) {
-                        char tbuf[32];
-                        std::snprintf(tbuf, sizeof(tbuf), "已跳转至 %02u:%02u", target_ms / 60000, (target_ms % 60000) / 1000);
-                        m_frame->setToast("点句跳转播放", tbuf);
+                    const Result seek_rc = qqmusicSeek(target_frame);
+                    if (R_SUCCEEDED(seek_rc)) {
+                        m_manual_offset = 0;
+                        m_manual_timer = 0;
+                        if (m_frame) {
+                            char tbuf[32];
+                            std::snprintf(tbuf, sizeof(tbuf), "已跳转至 %02u:%02u", target_ms / 60000, (target_ms % 60000) / 1000);
+                            m_frame->setToast("点句跳转播放", tbuf);
+                        }
+                    } else if (m_frame) {
+                        m_frame->showError("跳转失败", seek_rc);
                     }
                 }
                 return true;
@@ -242,21 +271,49 @@ namespace {
             return false;
         }
 
-        bool onTouch(tsl::elm::TouchEvent event, s32, s32 currY, s32, s32, s32, s32) override {
-            if (event != tsl::elm::TouchEvent::Release) return false;
-            // 触控点击歌词区域：向上或向下翻动
-            const s32 center_y = this->getY() + 260;
-            if (currY < center_y - 20) {
-                m_manual_offset--;
-                m_manual_timer = 240;
-            } else if (currY > center_y + 20) {
-                m_manual_offset++;
-                m_manual_timer = 240;
-            } else {
-                // 点击居中行：触发该句播放
-                onClick(HidNpadButton_A);
+        bool onTouch(tsl::elm::TouchEvent event, s32 currX, s32 currY, s32, s32, s32 initialX, s32 initialY) override {
+            const s32 x = this->getX(), y = this->getY(), w = this->getWidth(), h = this->getHeight();
+
+            if (event == tsl::elm::TouchEvent::Touch) {
+                // 触摸必须严格始于本歌词元素内部
+                if (currX >= x && currX <= x + w && currY >= y && currY <= y + h) {
+                    m_touch_down = true;
+                    m_touch_start_y = currY;
+                    return true;
+                }
+                return false;
             }
-            return true;
+
+            if (event == tsl::elm::TouchEvent::Release) {
+                if (!m_touch_down) return false;
+                m_touch_down = false;
+
+                // 触摸释放必须在元素内部且不是拖动操作
+                if (currX < x || currX > x + w || currY < y || currY > y + h)
+                    return false;
+                if (std::abs(currY - m_touch_start_y) > 25 || std::abs(currX - initialX) > 25)
+                    return false;
+
+                if (m_floating_mode) {
+                    const s32 bar_y = y + h / 2 - 35;
+                    if (currY >= bar_y && currY <= bar_y + 70) {
+                        return onClick(HidNpadButton_A);
+                    }
+                } else {
+                    const s32 center_y = y + 260;
+                    if (currY < center_y - 20) {
+                        m_manual_offset--;
+                        m_manual_timer = 240;
+                    } else if (currY > center_y + 20) {
+                        m_manual_offset++;
+                        m_manual_timer = 240;
+                    } else {
+                        return onClick(HidNpadButton_A);
+                    }
+                }
+                return true;
+            }
+            return false;
         }
     };
 
@@ -267,7 +324,7 @@ LyricGui::~LyricGui() = default;
 
 tsl::elm::Element *LyricGui::createUI() {
     m_frame = new QqMusicOverlayFrame();
-    m_frame->setDescription("\uE0E1 返回   \uE0E0 点句即播   \uE0E2 切换悬浮窗   L/R 切歌");
+    m_frame->setDescription("\uE0E1 返回   \uE0E0 点句即播   \uE0E2 精简/全屏   L/R 切歌");
     auto elem = new LyricElement(m_frame);
     m_content = elem;
     m_frame->setContent(elem);

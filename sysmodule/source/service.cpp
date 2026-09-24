@@ -353,7 +353,7 @@ namespace qqmusic {
                     // 不信任发送方的 NUL 终止：定长拷贝后强制收尾。
                     char path[FS_MAX_PATH];
                     const size_t in_len = strnlen((const char *)r->send_buffer.ptr, (size_t)r->send_buffer.size);
-                    if (in_len == 0)
+                    if (in_len == 0 || in_len >= sizeof(path))
                         return badInput;
                     memcpy(path, r->send_buffer.ptr, in_len);
                     path[in_len] = '\0';
@@ -381,7 +381,7 @@ namespace qqmusic {
 
                     char path[FS_MAX_PATH];
                     const size_t in_len = strnlen((const char *)r->send_buffer.ptr, (size_t)r->send_buffer.size);
-                    if (in_len == 0)
+                    if (in_len == 0 || in_len >= sizeof(path))
                         return badInput;
                     memcpy(path, r->send_buffer.ptr, in_len);
                     path[in_len] = '\0';

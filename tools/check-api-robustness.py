@@ -183,6 +183,18 @@ int main() {
     get_status = 0;
     assert(!GetFavAlbums(0, 30, items, ctotal));
 
+    // ---- 6. GetSongLyric: parsing, unescaping, size bounding ----------------
+    std::string lrc_out;
+    get_status = 200;
+    get_body = R"({"code":0,"lyric":"[00:01.00]Hello\n[00:02.00]World\n"})";
+    assert(GetSongLyric("001xyz", lrc_out) && lrc_out == "[00:01.00]Hello\n[00:02.00]World\n");
+    // Oversized response body (>64KB) rejected cleanly
+    get_body = "{\"code\":0,\"lyric\":\"" + std::string(70000, 'A') + "\"}";
+    assert(!GetSongLyric("001xyz", lrc_out));
+    // Network failure returns false
+    get_status = 0; get_body.clear();
+    assert(!GetSongLyric("001xyz", lrc_out));
+
     std::cout << "PASS: request escaping, overflow clamp, truncated-body rejection, transport-vs-empty semantics\n";
 }
 '''

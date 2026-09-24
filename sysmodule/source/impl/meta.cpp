@@ -663,6 +663,59 @@ static void FetchCoverFileBlocking(const char *path) {
     sdmc::CreateFolder("/qqmusic-cache");
     sdmc::WriteFile(cache_jpg.c_str(), g_cover_buf, cover_size);
 }
+static void FetchLyricFileBlocking(const char *path) {
+    const std::string key = CoverKeyFor(path);
+    if (key.empty())
+        return;
+
+    const std::string cache_lrc = std::string("/qqmusic-cache/") + key + ".lrc";
+    if (sdmc::FileExists(cache_lrc.c_str()))
+        return;
+
+    if (strncmp(path, "qqm://", 6) == 0) {
+        std::string songmid = key;
+        std::string lrc;
+        qqmusic::net::Init();
+        if (qqmusic::api::GetSongLyric(songmid, lrc) && !lrc.empty() && lrc.size() <= 48 * 1024) {
+            sdmc::CreateFolder("/qqmusic-cache");
+            if (R_SUCCEEDED(sdmc::WriteFile(cache_lrc.c_str(), lrc.data(), lrc.size()))) {
+                char b[128];
+                std::snprintf(b, sizeof(b), "SYS lyric stored: %s (%u bytes)\n", key.c_str(),
+                              (unsigned)lrc.size());
+                sysLog(b);
+            } else {
+                sdmc::DeleteFile(cache_lrc.c_str());
+            }
+        }
+    } else {
+        std::string local_path(path);
+        auto dot = local_path.find_last_of('.');
+        if (dot != std::string::npos && dot != 0) {
+            local_path.resize(dot);
+            local_path += ".lrc";
+            FsFile f;
+            if (R_SUCCEEDED(sdmc::OpenFile(&f, local_path.c_str(), FsOpenMode_Read))) {
+                s64 fsz = 0;
+                fsFileGetSize(&f, &fsz);
+                if (fsz > 0 && fsz <= 48 * 1024) {
+                    std::string buf((size_t)fsz, '\0');
+                    u64 got = 0;
+                    Result rc = fsFileRead(&f, 0, buf.data(), (u64)fsz, 0, &got);
+                    fsFileClose(&f);
+                    if (R_SUCCEEDED(rc) && got == (u64)fsz) {
+                        sdmc::CreateFolder("/qqmusic-cache");
+                        if (R_FAILED(sdmc::WriteFile(cache_lrc.c_str(), buf.data(), buf.size()))) {
+                            sdmc::DeleteFile(cache_lrc.c_str());
+                        }
+                    }
+                } else {
+                    fsFileClose(&f);
+                }
+            }
+        }
+    }
+}
+
 
 void StopCoverWorker() {
     g_cover_running = false;
@@ -678,6 +731,7 @@ void CoverWorkerThreadFunc(void *) {
                 svcSleepThread(100'000'000ull);
             if (!g_cover_running) break;
             FetchCoverFileBlocking(path);
+            FetchLyricFileBlocking(path);
         }
         else
             svcSleepThread(150'000'000ull);
@@ -721,40 +775,37 @@ Result EnsureLyricFile(const char *path, char *out_name, size_t out_name_size) {
         return 0;
     }
 
-    // 1) 在线曲目：在线拉取标准 LRC 文本并缓存
+    // 1) 在线曲目：未落盘时登记后台工作线程异步拉取，IPC 绝不阻塞
     if (strncmp(path, "qqm://", 6) == 0) {
-        std::string songmid = key;
-        std::string lrc;
-        if (qqmusic::api::GetSongLyric(songmid, lrc) && !lrc.empty()) {
-            sdmc::CreateFolder("/qqmusic-cache");
-            sdmc::WriteFile(cache_lrc.c_str(), lrc.data(), lrc.size());
-            snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
-            return 0;
-        }
-        return qqmusic::FileNotFound;
+        EnqueueCoverJob(path);
+        return qqmusic::FileOpenFailure;
     }
 
-    // 2) 本地曲目：检查同目录同名 .lrc 文件
+    // 2) 本地曲目：检查同目录同名 .lrc 文件并严格校验 I/O 结果
     std::string local_path(path);
     auto dot = local_path.find_last_of('.');
     if (dot != std::string::npos && dot != 0) {
         local_path.resize(dot);
         local_path += ".lrc";
-        if (sdmc::FileExists(local_path.c_str())) {
-            FsFile f;
-            if (R_SUCCEEDED(sdmc::OpenFile(&f, local_path.c_str(), FsOpenMode_Read))) {
-                s64 fsz = 0;
-                fsFileGetSize(&f, &fsz);
-                if (fsz > 0 && fsz < 256 * 1024) {
-                    std::string buf((size_t)fsz, '\0');
-                    u64 got = 0;
-                    fsFileRead(&f, 0, buf.data(), (u64)fsz, 0, &got);
-                    fsFileClose(&f);
+        FsFile f;
+        if (R_SUCCEEDED(sdmc::OpenFile(&f, local_path.c_str(), FsOpenMode_Read))) {
+            s64 fsz = 0;
+            fsFileGetSize(&f, &fsz);
+            if (fsz > 0 && fsz <= 48 * 1024) {
+                std::string buf((size_t)fsz, '\0');
+                u64 got = 0;
+                Result rc = fsFileRead(&f, 0, buf.data(), (u64)fsz, 0, &got);
+                fsFileClose(&f);
+                if (R_SUCCEEDED(rc) && got == (u64)fsz) {
                     sdmc::CreateFolder("/qqmusic-cache");
-                    sdmc::WriteFile(cache_lrc.c_str(), buf.data(), buf.size());
-                    snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
-                    return 0;
+                    if (R_SUCCEEDED(sdmc::WriteFile(cache_lrc.c_str(), buf.data(), buf.size()))) {
+                        snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
+                        return 0;
+                    } else {
+                        sdmc::DeleteFile(cache_lrc.c_str());
+                    }
                 }
+            } else {
                 fsFileClose(&f);
             }
         }

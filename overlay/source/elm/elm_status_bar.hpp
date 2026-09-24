@@ -61,6 +61,8 @@ class StatusBar final : public tsl::elm::Element {
     qqmusic::LyricParser m_lyric_parser;
     char m_lyric_track_path[FS_MAX_PATH]{};
     bool m_lyric_available = false;
+    u8 m_lyric_retry = 0;
+    u16 m_lyric_cooldown = 0;
 
   public:
     StatusBar();

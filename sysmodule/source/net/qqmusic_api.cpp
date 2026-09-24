@@ -1055,17 +1055,17 @@ bool GetSongLyric(const std::string &songmid, std::string &out_lrc) {
     // 官方 Web 歌词接口（nobase64=1 直接下发标准明文 UTF-8 LRC 文本，免解密）
     std::string url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=" +
                       songmid + "&format=json&nobase64=1&songtype=0" + WebCommonParams();
-    auto resp = net::Get(url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 8);
-    if (!resp.ok() || resp.body.empty()) {
+    auto resp = net::Get(url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 6);
+    if (!resp.ok() || resp.body.empty() || resp.body.size() > 64 * 1024) {
         std::string fb_url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_yqq.fcg?songmid=" +
                              songmid + "&format=json&nobase64=1" + WebCommonParams();
-        resp = net::Get(fb_url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 8);
+        resp = net::Get(fb_url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 6);
     }
-    if (!resp.ok() || resp.body.empty())
+    if (!resp.ok() || resp.body.empty() || resp.body.size() > 64 * 1024)
         return false;
 
     std::string lrc = ExtractField(resp.body, "\"lyric\"");
-    if (lrc.empty()) return false;
+    if (lrc.empty() || lrc.size() > 48 * 1024) return false;
 
     out_lrc = std::move(lrc);
     return true;

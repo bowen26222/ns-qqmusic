@@ -195,7 +195,10 @@ StatusBar::~StatusBar() {
 void StatusBar::RefreshLyric() {
     if (this->m_track.path[0] == '\0') {
         this->m_lyric_available = false;
+        this->m_lyric_track_path[0] = '\0';
         this->m_lyric_parser.Clear();
+        this->m_lyric_retry = 0;
+        this->m_lyric_cooldown = 0;
         return;
     }
 
@@ -203,18 +206,35 @@ void StatusBar::RefreshLyric() {
         std::snprintf(this->m_lyric_track_path, sizeof(this->m_lyric_track_path), "%s", this->m_track.path);
         this->m_lyric_available = false;
         this->m_lyric_parser.Clear();
+        this->m_lyric_retry = 0;
+        this->m_lyric_cooldown = 0;
+    }
 
-        char name[96] = {};
-        if (R_SUCCEEDED(qqmusicEnsureLyric(this->m_track.path, name, sizeof(name))) && name[0] && SdCoverFsReady()) {
-            static u8 lrc_buf[256 * 1024];
-            char file_path[160];
-            std::snprintf(file_path, sizeof(file_path), "/qqmusic-cache/%s", name);
-            u32 total = 0;
-            if (ReadWholeFile(file_path, lrc_buf, (u32)sizeof(lrc_buf), &total) && total > 0) {
-                std::string lrc_text((const char *)lrc_buf, total);
-                this->m_lyric_available = this->m_lyric_parser.Parse(lrc_text);
-            }
+    if (this->m_lyric_available)
+        return;
+
+    if (this->m_lyric_cooldown > 0) {
+        this->m_lyric_cooldown--;
+        return;
+    }
+
+    char name[96] = {};
+    if (R_SUCCEEDED(qqmusicEnsureLyric(this->m_track.path, name, sizeof(name))) && name[0] && SdCoverFsReady()) {
+        static u8 lrc_buf[48 * 1024];
+        char file_path[160];
+        std::snprintf(file_path, sizeof(file_path), "/qqmusic-cache/%s", name);
+        u32 total = 0;
+        if (ReadWholeFile(file_path, lrc_buf, (u32)sizeof(lrc_buf), &total) && total > 0) {
+            std::string lrc_text((const char *)lrc_buf, total);
+            this->m_lyric_available = this->m_lyric_parser.Parse(lrc_text);
         }
+    }
+
+    if (!this->m_lyric_available) {
+        this->m_lyric_retry++;
+        this->m_lyric_cooldown = 30; // 30 帧（0.5秒）后重试
+        if (this->m_lyric_retry >= 40)
+            this->m_lyric_cooldown = 300; // 20秒后放宽至 5 秒轮询一次
     }
 }
 
@@ -448,6 +468,8 @@ void StatusBar::draw(tsl::gfx::Renderer *renderer) {
             if (line_idx >= 0 && line_idx < (int)this->m_lyric_parser.LineCount()) {
                 const auto &l = this->m_lyric_parser.GetLine((size_t)line_idx);
                 line_str = l.text.empty() ? "(音乐过门)" : l.text;
+            } else {
+                line_str = "(音乐前奏)";
             }
             if (!line_str.empty()) {
                 renderer->drawString("\uE098", false, this->getX() + 15, this->HintY(), 16, a({0x0, 0xD, 0xF, 0xF}));
