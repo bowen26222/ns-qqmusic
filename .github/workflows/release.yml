@@ -21,9 +21,11 @@ jobs:
 
       - name: Install build tools
         run: |
-          dkp-pacman -Syu --noconfirm
-          dkp-pacman -S --noconfirm zip
-
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get install -y --no-install-recommends zip python3
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm zip python || true
+          fi
       - name: Build sysmodule, overlay, and package
         run: |
           . /opt/devkitpro/switchvars.sh
