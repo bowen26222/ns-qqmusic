@@ -51,8 +51,8 @@
 ## 📦 安装方法
 
 ### 运行环境要求
-- **系统固件**：Nintendo Switch 全机型（系统版本兼容 12.0.0 ~ 最新 19.x+）
-- **引导环境**：Atmosphère 1.0.0+
+- **系统固件**：Nintendo Switch 全机型（系统版本22.5）
+- **引导环境**：Atmosphère 11.0.0+
 - **覆盖层前端**：Ultrahand Overlay 或 Tesla-Menu (nx-ovlloader)
 
 ### 一键安装
