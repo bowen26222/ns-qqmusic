@@ -1,6 +1,7 @@
 #include "gui_browser.hpp"
 
 #include "client.h"
+#include "gui_main.hpp"
 
 #include <algorithm>
 #include <array>
@@ -409,6 +410,7 @@ void BrowserGui::queueAlbum(bool play) {
         }
     }
     infoAlert(play ? "正在播放专辑" : "专辑已加入队列", "共 " + std::to_string(added) + " 首歌曲");
+    tsl::changeTo<MainGui>();
 }
 
 void BrowserGui::recordScanEntry(const FsDirectoryEntry &entry) {

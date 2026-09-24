@@ -1,6 +1,7 @@
 #include "gui_playlist.hpp"
 
 #include "elm_overlayframe.hpp"
+#include "gui_main.hpp"
 #include "client.h"
 
 #include <cstring>
@@ -136,8 +137,13 @@ void PlaylistGui::RefreshQueue() {
             }
             const bool play = (keys & HidNpadButton_A) != 0;
             rc = play ? qqmusicSelect(i) : qqmusicRemove(i);
-                if (R_FAILED(rc)) m_frame->showError(play ? "播放曲目失败" : "移除曲目失败", rc);
-            else m_reload = true;
+            if (R_FAILED(rc)) {
+                m_frame->showError(play ? "播放曲目失败" : "移除曲目失败", rc);
+            } else if (play) {
+                tsl::changeTo<MainGui>();
+            } else {
+                m_reload = true;
+            }
             return true;
         });
         m_list->addItem(item);

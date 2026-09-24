@@ -1,6 +1,7 @@
 #pragma once
 
 #include <tesla.hpp>
+#include "client.h"
 #include <memory>
 #include <optional>
 #include <cstdio>
@@ -83,6 +84,20 @@ public:
             return false;
         return m_contentElement->onTouch(event, currX, currY, prevX, prevY, initialX, initialY);
     }
+    bool handleInput(u64 keysDown, u64, const HidTouchState&, HidAnalogStickState, HidAnalogStickState) override {
+        if (keysDown & HidNpadButton_L) {
+            qqmusicPrev();
+            setToast("上一曲", "正在切歌...");
+            return true;
+        }
+        if (keysDown & HidNpadButton_R) {
+            qqmusicNext();
+            setToast("下一曲", "正在切歌...");
+            return true;
+        }
+        return false;
+    }
+
 
     /**
      * @brief Sets the content of the frame

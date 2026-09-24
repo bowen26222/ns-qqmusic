@@ -34,7 +34,7 @@ CFLAGS	+=	$(INCLUDE) -DVERSION=\"v$(APP_VERSION)\" -DQQMUSIC_API_VERSION=$(API_V
 
 # libultrahand：per-overlay 配置目录
 # 音频格式（browser 白名单 + player 解码）
-CFLAGS	+=	-DWANT_MP3 -DWANT_FLAC -DWANT_WAV
+CFLAGS	+=	-DWANT_MP3 -DWANT_FLAC -DWANT_WAV -DIS_STATUS_MONITOR_DIRECTIVE=1
 
 CXXFLAGS	:= $(CFLAGS) -fno-exceptions -fno-rtti -std=c++20
 
