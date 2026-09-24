@@ -4,6 +4,7 @@
 #include "elm_volume.hpp"
 #include "gui_browser.hpp"
 #include "gui_playlist.hpp"
+#include "gui_lyric.hpp"
 #include "gui_online.hpp"
 #include "gui_settings.hpp"
 #include "gui_screen_off.hpp"
@@ -30,6 +31,17 @@ tsl::elm::Element *MainGui::createUI() {
         return false;
     });
     list->addItem(queue_button);
+    /* 实时悬浮歌词：全屏动态滚动歌词、点句即播、精简悬浮窗。 */
+    auto lyric_button = new tsl::elm::ListItem("实时悬浮歌词", "全屏动态滚动歌词 · 点句即播");
+    lyric_button->setClickListener([](u64 keys) {
+        if (keys & HidNpadButton_A) {
+            tsl::changeTo<LyricGui>();
+            return true;
+        }
+        return false;
+    });
+    list->addItem(lyric_button);
+
 
     /* QQ 音乐在线：扫码登录、曲库搜索、榜单推荐。 */
     auto online_button = new tsl::elm::ListItem("QQ音乐在线");

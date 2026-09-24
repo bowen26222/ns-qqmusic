@@ -372,6 +372,34 @@ namespace qqmusic {
                     return 0;
                 }
 
+                case QqMusicIpcCmd_EnsureLyric: {
+                    // send_buffer: 曲目路径（含 NUL）；recv_buffer: 歌词缓存文件名；out: u32 ok
+                    if (!r->send_buffer.ptr || !r->send_buffer.size ||
+                        !r->recv_buffer.ptr || !r->recv_buffer.size ||
+                        r->send_buffer.size > FS_MAX_PATH)
+                        return badInput;
+
+                    char path[FS_MAX_PATH];
+                    const size_t in_len = strnlen((const char *)r->send_buffer.ptr, (size_t)r->send_buffer.size);
+                    if (in_len == 0)
+                        return badInput;
+                    memcpy(path, r->send_buffer.ptr, in_len);
+                    path[in_len] = '\0';
+
+                    char name[96] = {};
+                    const Result lyricRc = impl::EnsureLyricFile(path, name, sizeof(name));
+                    const u32 ok = (R_SUCCEEDED(lyricRc) && name[0]) ? 1u : 0u;
+                    if (ok) {
+                        const size_t len = strlen(name);
+                        const size_t n = (len < r->recv_buffer.size) ? len : (r->recv_buffer.size - 1);
+                        memcpy(r->recv_buffer.ptr, name, n);
+                        ((char *)r->recv_buffer.ptr)[n] = '\0';
+                    }
+                    *out_dataSize = sizeof(ok);
+                    memcpy(out_data, &ok, sizeof(ok));
+                    return 0;
+                }
+
                 case QqMusicIpcCmd_OnlineGetStatus: {
                     auto user = qqmusic::api::GetUserSession();
                     QqMusicOnlineStatus s = {};

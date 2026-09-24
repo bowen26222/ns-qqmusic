@@ -192,6 +192,32 @@ StatusBar::~StatusBar() {
     this->m_cover_px = nullptr;
 }
 
+void StatusBar::RefreshLyric() {
+    if (this->m_track.path[0] == '\0') {
+        this->m_lyric_available = false;
+        this->m_lyric_parser.Clear();
+        return;
+    }
+
+    if (std::strcmp(this->m_lyric_track_path, this->m_track.path) != 0) {
+        std::snprintf(this->m_lyric_track_path, sizeof(this->m_lyric_track_path), "%s", this->m_track.path);
+        this->m_lyric_available = false;
+        this->m_lyric_parser.Clear();
+
+        char name[96] = {};
+        if (R_SUCCEEDED(qqmusicEnsureLyric(this->m_track.path, name, sizeof(name))) && name[0] && SdCoverFsReady()) {
+            static u8 lrc_buf[256 * 1024];
+            char file_path[160];
+            std::snprintf(file_path, sizeof(file_path), "/qqmusic-cache/%s", name);
+            u32 total = 0;
+            if (ReadWholeFile(file_path, lrc_buf, (u32)sizeof(lrc_buf), &total) && total > 0) {
+                std::string lrc_text((const char *)lrc_buf, total);
+                this->m_lyric_available = this->m_lyric_parser.Parse(lrc_text);
+            }
+        }
+    }
+}
+
 /* 封面懒加载：每个曲目路径只取一次。
    后台（sysmodule）确保 /qqmusic-cache/<name> 已落盘 → 覆盖层直接读文件 →
    stb_image 解码 RGBA → 2x2 box 减半至不超过目标 2 倍 → 一次 area-box 到 (nw,nh)
@@ -413,8 +439,24 @@ void StatusBar::draw(tsl::gfx::Renderer *renderer) {
             : "播放失败: 无法解析曲目或网络超时";
         renderer->drawString(hint, false, this->getX() + 15, this->HintY(), 16, a({0xF, 0xF, 0xE, 0}));
     }
-    else if (this->m_focused) {
-        renderer->drawString("L/R: 切歌   ZL/ZR: 快进退   左右: 选中控制", false, this->getX() + 15, this->HintY(), 14, a(tsl::style::color::ColorDescription));
+    else {
+        RefreshLyric();
+        if (this->m_lyric_available && !this->m_lyric_parser.IsEmpty() && this->m_track.sample_rate > 0) {
+            const u32 cur_ms = (u32)((u64)this->m_track.current_frame * 1000 / this->m_track.sample_rate);
+            const int line_idx = this->m_lyric_parser.GetCurrentIndex(cur_ms);
+            std::string line_str;
+            if (line_idx >= 0 && line_idx < (int)this->m_lyric_parser.LineCount()) {
+                const auto &l = this->m_lyric_parser.GetLine((size_t)line_idx);
+                line_str = l.text.empty() ? "(音乐过门)" : l.text;
+            }
+            if (!line_str.empty()) {
+                renderer->drawString("\uE098", false, this->getX() + 15, this->HintY(), 16, a({0x0, 0xD, 0xF, 0xF}));
+                renderer->drawString(line_str.c_str(), false, this->getX() + 38, this->HintY(), 16, a({0xF, 0xF, 0xF, 0xF}), this->getWidth() - 50);
+            }
+        }
+        else if (this->m_focused) {
+            renderer->drawString("L/R: 切歌   ZL/ZR: 快进退   左右: 选中控制", false, this->getX() + 15, this->HintY(), 14, a(tsl::style::color::ColorDescription));
+        }
     }
 
     const auto repeat_color = this->m_repeat ? tsl::style::color::ColorHighlight : tsl::style::color::ColorHeaderBar;

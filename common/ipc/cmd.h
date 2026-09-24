@@ -45,6 +45,7 @@ enum QqMusicIpcCmd {
     QqMusicIpcCmd_GetPathMeta    = 47,   // send_buffer: path; receive_buffer: QqMusicTrackMeta
     QqMusicIpcCmd_GetRadioMode   = 48,   // out: u32 (0/1)
     QqMusicIpcCmd_SetRadioMode   = 49,   // in: u32 (0/1)
+    QqMusicIpcCmd_EnsureLyric   = 52,   // send_buffer: 曲目路径; out: u32 ok; recv_buffer: 歌词缓存文件名
 
     // 在线音乐（M3）
     QqMusicIpcCmd_OnlineGetStatus    = 60, // out: { u32 logged_in; char uin[32]; char nickname[64]; }

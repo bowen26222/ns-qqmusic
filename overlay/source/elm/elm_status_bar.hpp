@@ -3,6 +3,7 @@
 #include "client.h"
 #include "symbol.hpp"
 
+#include "lyric_parser.hpp"
 #include <tesla.hpp>
 
 class QqMusicOverlayFrame;
@@ -56,6 +57,10 @@ class StatusBar final : public tsl::elm::Element {
     void ActivateControl(int index);
     void SeekToPercentage(float pct);
     void SeekBySeconds(int delta_sec);
+    void RefreshLyric();
+    qqmusic::LyricParser m_lyric_parser;
+    char m_lyric_track_path[FS_MAX_PATH]{};
+    bool m_lyric_available = false;
 
   public:
     StatusBar();

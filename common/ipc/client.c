@@ -254,6 +254,22 @@ Result qqmusicEnsureCover(const char *path, char *out_name, u32 out_name_size) {
     return rc;
 }
 
+Result qqmusicEnsureLyric(const char *path, char *out_name, u32 out_name_size) {
+    if (!path || !path[0] || !out_name || !out_name_size)
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    out_name[0] = '\0';
+
+    u32 ok = 0;
+    const u32 in = 0;
+    Result rc = serviceDispatchInOut(&g_qqmusic, QqMusicIpcCmd_EnsureLyric, in, ok,
+        .buffer_attrs = { SfBufferAttr_In | SfBufferAttr_HipcMapAlias,
+                          SfBufferAttr_Out | SfBufferAttr_HipcMapAlias },
+        .buffers = { { path, strlen(path) + 1 }, { out_name, out_name_size } });
+    if (R_FAILED(rc) || !ok)
+        out_name[0] = '\0';
+    return rc;
+}
+
 Result qqmusicOnlineGetStatus(QqMusicOnlineStatus *out) {
     if (!out)
         return MAKERESULT(Module_Libnx, LibnxError_BadInput);

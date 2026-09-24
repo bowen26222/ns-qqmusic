@@ -1048,4 +1048,27 @@ std::string GetSongPlayUrl(const std::string &songmid, const std::string &media_
     return "";
 }
 
+bool GetSongLyric(const std::string &songmid, std::string &out_lrc) {
+    out_lrc.clear();
+    if (songmid.empty()) return false;
+
+    // 官方 Web 歌词接口（nobase64=1 直接下发标准明文 UTF-8 LRC 文本，免解密）
+    std::string url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=" +
+                      songmid + "&format=json&nobase64=1&songtype=0" + WebCommonParams();
+    auto resp = net::Get(url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 8);
+    if (!resp.ok() || resp.body.empty()) {
+        std::string fb_url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_yqq.fcg?songmid=" +
+                             songmid + "&format=json&nobase64=1" + WebCommonParams();
+        resp = net::Get(fb_url, {"Referer: https://y.qq.com/"}, BuildCookieHeader(), 8);
+    }
+    if (!resp.ok() || resp.body.empty())
+        return false;
+
+    std::string lrc = ExtractField(resp.body, "\"lyric\"");
+    if (lrc.empty()) return false;
+
+    out_lrc = std::move(lrc);
+    return true;
+}
+
 } // namespace qqmusic::api

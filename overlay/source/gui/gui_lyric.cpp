@@ -1,0 +1,287 @@
+#include "gui_lyric.hpp"
+#include "client.h"
+#include "elm_overlayframe.hpp"
+#include "lyric_parser.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+namespace {
+
+    bool ReadSdText(const char *path, std::string &out_text) {
+        out_text.clear();
+        FsFileSystem fs;
+        if (R_FAILED(fsOpenSdCardFileSystem(&fs))) return false;
+        FsFile f;
+        bool ok = false;
+        if (R_SUCCEEDED(fsFsOpenFile(&fs, path, FsOpenMode_Read, &f))) {
+            s64 sz = 0;
+            if (R_SUCCEEDED(fsFileGetSize(&f, &sz)) && sz > 0 && sz < 256 * 1024) {
+                out_text.resize((size_t)sz);
+                u64 got = 0;
+                if (R_SUCCEEDED(fsFileRead(&f, 0, out_text.data(), (u64)sz, 0, &got)) && got == (u64)sz) {
+                    ok = true;
+                } else {
+                    out_text.clear();
+                }
+            }
+            fsFileClose(&f);
+        }
+        fsFsClose(&fs);
+        return ok;
+    }
+
+    class LyricElement final : public tsl::elm::Element {
+    private:
+        qqmusic::LyricParser m_parser;
+        char m_loaded_path[FS_MAX_PATH]{};
+        bool m_lyric_loaded = false;
+        bool m_floating_mode = false;     // 精简悬浮条模式
+        int m_manual_offset = 0;          // 手动翻阅偏差行数
+        u32 m_manual_timer = 0;           // 手动翻阅倒计时（数秒后自动归位）
+        std::string m_title;
+        std::string m_artist;
+        QqMusicCurrentTrack m_track{};
+        QqMusicOverlayFrame *m_frame = nullptr;
+
+        void LoadTrackLyric(const char *path) {
+            std::snprintf(m_loaded_path, sizeof(m_loaded_path), "%s", path);
+            m_parser.Clear();
+            m_lyric_loaded = false;
+            m_manual_offset = 0;
+            m_manual_timer = 0;
+
+            if (!path || !path[0]) {
+                m_title = "未选择曲目";
+                m_artist = "";
+                return;
+            }
+
+            QqMusicTrackMeta meta{};
+            if (R_SUCCEEDED(qqmusicGetTrackMeta(QQMUSIC_TRACKMETA_CURRENT, &meta)) && meta.valid && meta.title[0]) {
+                m_title = meta.title;
+                m_artist = meta.artist;
+            } else {
+                const char *slash = std::strrchr(path, '/');
+                m_title = slash ? slash + 1 : path;
+                const size_t dot = m_title.find_last_of('.');
+                if (dot != std::string::npos && dot != 0) m_title.resize(dot);
+                m_artist = "";
+            }
+
+            char name[96] = {};
+            if (R_SUCCEEDED(qqmusicEnsureLyric(path, name, sizeof(name))) && name[0]) {
+                char file_path[160];
+                std::snprintf(file_path, sizeof(file_path), "/qqmusic-cache/%s", name);
+                std::string lrc_text;
+                if (ReadSdText(file_path, lrc_text) && !lrc_text.empty()) {
+                    m_lyric_loaded = m_parser.Parse(lrc_text);
+                }
+            }
+        }
+
+    public:
+        explicit LyricElement(QqMusicOverlayFrame *frame) : m_frame(frame) {}
+
+        tsl::elm::Element *requestFocus(tsl::elm::Element *, tsl::FocusDirection) override {
+            return this;
+        }
+
+        void updateLyrics() {
+            QqMusicCurrentTrack track{};
+            if (R_SUCCEEDED(qqmusicGetCurrentTrack(&track))) {
+                m_track = track;
+                if (std::strcmp(m_loaded_path, track.path) != 0) {
+                    LoadTrackLyric(track.path);
+                }
+            }
+            if (m_manual_timer > 0) {
+                m_manual_timer--;
+                if (m_manual_timer == 0)
+                    m_manual_offset = 0; // 自动回归当前正在唱的歌词
+            }
+        }
+
+        void draw(tsl::gfx::Renderer *renderer) override {
+            updateLyrics();
+
+            const s32 x = this->getX(), y = this->getY(), w = this->getWidth(), h = this->getHeight();
+
+            // 1. 顶部当前曲目信息卡
+            renderer->drawRect(x + 10, y + 10, w - 20, 52, tsl::Color{0x1, 0x1, 0x2, 0xF});
+            renderer->drawRect(x + 10, y + 61, w - 20, 1, tsl::Color{0x2, 0x3, 0x4, 0xF});
+
+            std::string header_str = m_title;
+            if (!m_artist.empty()) header_str += " - " + m_artist;
+            renderer->drawString(header_str.c_str(), false, x + 24, y + 42, 21, tsl::Color{0xF, 0xF, 0xF, 0xF}, w - 48);
+
+            // 2. 歌词主体
+            if (!m_lyric_loaded || m_parser.IsEmpty()) {
+                renderer->drawString(m_track.path[0] ? "正在获取歌词 / 本曲暂无歌词" : "播放曲目后即可查看实时歌词",
+                                     false, x + 40, y + h / 2, 20, tsl::Color{0x8, 0x8, 0x9, 0xF});
+                return;
+            }
+
+            const u32 current_ms = (m_track.sample_rate > 0)
+                ? (u32)((u64)m_track.current_frame * 1000 / m_track.sample_rate) : 0;
+            const int active_idx = m_parser.GetCurrentIndex(current_ms);
+            const int target_center = std::clamp(active_idx + m_manual_offset, 0, (int)m_parser.LineCount() - 1);
+
+            if (m_floating_mode) {
+                // ---- 精简悬浮条模式 (Floating Bar) ----
+                const s32 bar_h = 70;
+                const s32 bar_y = y + h / 2 - 35;
+                renderer->drawRect(x + 12, bar_y, w - 24, bar_h, tsl::Color{0x1, 0x1, 0x2, 0xF});
+                renderer->drawRect(x + 12, bar_y, w - 24, 2, tsl::Color{0x0, 0xA, 0xD, 0xF});
+                renderer->drawString("\uE098", false, x + 24, bar_y + 44, 22, tsl::Color{0x0, 0xD, 0xF, 0xF});
+
+                const std::string line_text = m_parser.GetLine((size_t)target_center).text;
+                renderer->drawString(line_text.empty() ? "(音乐过门)" : line_text.c_str(),
+                                     false, x + 58, bar_y + 44, 22, tsl::Color{0xF, 0xF, 0xF, 0xF}, w - 80);
+                return;
+            }
+
+            // ---- 全屏动态滚动歌词模式 (Full Scrolling Lyrics) ----
+            const s32 center_y = y + 260; // 视口居中基准线
+            constexpr s32 line_spacing = 42;
+
+            // 绘制当前高亮行背景光晕
+            renderer->drawRect(x + 10, center_y - 28, w - 20, 36, tsl::Color{0x1, 0x2, 0x3, 0xE});
+            renderer->drawRect(x + 10, center_y - 28, 4, 36, tsl::Color{0x0, 0xA, 0xD, 0xF});
+
+            // 围绕 target_center 上下展示各 5 行（共 11 行视口）
+            constexpr int kHalfWindow = 5;
+            for (int offset = -kHalfWindow; offset <= kHalfWindow; ++offset) {
+                const int line_idx = target_center + offset;
+                if (line_idx < 0 || line_idx >= (int)m_parser.LineCount())
+                    continue;
+
+                const auto &lyric = m_parser.GetLine((size_t)line_idx);
+                const s32 cur_y = center_y + offset * line_spacing;
+
+                // 超过视口上下界则裁剪
+                if (cur_y < y + 80 || cur_y > y + h - 40)
+                    continue;
+
+                std::string txt = lyric.text.empty() ? "\u2022 \u2022 \u2022" : lyric.text;
+
+                if (offset == 0) {
+                    // 当前唱到的一句：大字号、鲜艳高亮亮青色
+                    renderer->drawString(txt.c_str(), false, x + 30, cur_y, 23, tsl::Color{0x0, 0xD, 0xF, 0xF}, w - 60);
+                } else {
+                    // 伴随距离渐变淡出的已唱 / 待唱行
+                    const int dist = std::abs(offset);
+                    const tsl::Color c = (dist == 1) ? tsl::Color{0xD, 0xD, 0xE, 0xF}
+                                       : (dist == 2) ? tsl::Color{0x8, 0x8, 0x9, 0xF}
+                                       : (dist == 3) ? tsl::Color{0x5, 0x5, 0x6, 0xF}
+                                                     : tsl::Color{0x3, 0x3, 0x4, 0xF};
+                    renderer->drawString(txt.c_str(), false, x + 30, cur_y, 18, c, w - 60);
+                }
+            }
+
+            // 若正处于手动浏览状态，显示提示
+            if (m_manual_offset != 0) {
+                renderer->drawString("\uE0E0 点击跳转该句播放   左右恢复同步", false, x + 30, y + h - 20, 14,
+                                     tsl::Color{0x0, 0xD, 0xF, 0xF});
+            }
+        }
+
+        void layout(u16 parentX, u16 parentY, u16 parentWidth, u16 parentHeight) override {
+            setBoundaries(parentX, parentY, parentWidth, parentHeight);
+        }
+
+        bool onClick(u64 keys) override {
+            if (keys & (HidNpadButton_AnyUp | HidNpadButton_StickLUp)) {
+                if (m_lyric_loaded && !m_parser.IsEmpty()) {
+                    m_manual_offset--;
+                    m_manual_timer = 240; // 4秒无操作自动归位
+                }
+                return true;
+            }
+            if (keys & (HidNpadButton_AnyDown | HidNpadButton_StickLDown)) {
+                if (m_lyric_loaded && !m_parser.IsEmpty()) {
+                    m_manual_offset++;
+                    m_manual_timer = 240;
+                }
+                return true;
+            }
+            if (keys & (HidNpadButton_AnyLeft | HidNpadButton_AnyRight)) {
+                m_manual_offset = 0;
+                m_manual_timer = 0;
+                if (m_frame) m_frame->setToast("已恢复自动跟随", "歌词正在实时同步滚动");
+                return true;
+            }
+            if (keys & HidNpadButton_X) {
+                m_floating_mode = !m_floating_mode;
+                if (m_frame)
+                    m_frame->setToast(m_floating_mode ? "已切换为精简悬浮窗" : "已切换为全屏滚动歌词",
+                                      m_floating_mode ? "大字单行悬浮展示" : "多行沉浸式平滑跟随");
+                return true;
+            }
+            if (keys & HidNpadButton_A) {
+                // 点句即播：直接跳转播放到选中的歌词时间戳！
+                if (m_lyric_loaded && !m_parser.IsEmpty() && m_track.sample_rate > 0) {
+                    const u32 current_ms = (u32)((u64)m_track.current_frame * 1000 / m_track.sample_rate);
+                    const int active_idx = m_parser.GetCurrentIndex(current_ms);
+                    const int target_idx = std::clamp(active_idx + m_manual_offset, 0, (int)m_parser.LineCount() - 1);
+                    const u32 target_ms = m_parser.GetLine((size_t)target_idx).time_ms;
+                    const u32 target_frame = (u32)((u64)target_ms * m_track.sample_rate / 1000);
+                    qqmusicSeek(target_frame);
+                    m_manual_offset = 0;
+                    m_manual_timer = 0;
+                    if (m_frame) {
+                        char tbuf[32];
+                        std::snprintf(tbuf, sizeof(tbuf), "已跳转至 %02u:%02u", target_ms / 60000, (target_ms % 60000) / 1000);
+                        m_frame->setToast("点句跳转播放", tbuf);
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+
+        bool onTouch(tsl::elm::TouchEvent event, s32, s32 currY, s32, s32, s32, s32) override {
+            if (event != tsl::elm::TouchEvent::Release) return false;
+            // 触控点击歌词区域：向上或向下翻动
+            const s32 center_y = this->getY() + 260;
+            if (currY < center_y - 20) {
+                m_manual_offset--;
+                m_manual_timer = 240;
+            } else if (currY > center_y + 20) {
+                m_manual_offset++;
+                m_manual_timer = 240;
+            } else {
+                // 点击居中行：触发该句播放
+                onClick(HidNpadButton_A);
+            }
+            return true;
+        }
+    };
+
+} // namespace
+
+LyricGui::LyricGui() = default;
+LyricGui::~LyricGui() = default;
+
+tsl::elm::Element *LyricGui::createUI() {
+    m_frame = new QqMusicOverlayFrame();
+    m_frame->setDescription("\uE0E1 返回   \uE0E0 点句即播   \uE0E2 切换悬浮窗   L/R 切歌");
+    auto elem = new LyricElement(m_frame);
+    m_content = elem;
+    m_frame->setContent(elem);
+    return m_frame;
+}
+
+void LyricGui::update() {
+    // 歌词随帧刷新由 LyricElement::draw 驱动
+}
+
+bool LyricGui::handleInput(u64 keysDown, u64, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
+    if (keysDown & HidNpadButton_B) {
+        tsl::goBack();
+        return true;
+    }
+    return false;
+}

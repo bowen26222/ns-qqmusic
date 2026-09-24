@@ -32,6 +32,8 @@ void StopCoverWorker();
 // 确保 path 的封面已落盘到 /qqmusic-cache/<name>（JPEG），并把 <name> 写回 out_name。
 // **非阻塞**：文件已在则立即返回；否则登记后台任务并返回失败，界面稍后重试。
 Result EnsureCoverFile(const char *path, char *out_name, size_t out_name_size);
+// 确保 path 的歌词已落盘到 /qqmusic-cache/<name>（.lrc），并把 <name> 写回 out_name。
+Result EnsureLyricFile(const char *path, char *out_name, size_t out_name_size);
 void SetTrackMetaCache(const char *path, const TrackMeta &meta);
 
 }

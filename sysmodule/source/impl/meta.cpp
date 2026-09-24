@@ -706,4 +706,61 @@ Result EnsureCoverFile(const char *path, char *out_name, size_t out_name_size) {
     return qqmusic::FileOpenFailure;
 }
 
+Result EnsureLyricFile(const char *path, char *out_name, size_t out_name_size) {
+    if (!path || !path[0] || !out_name || out_name_size == 0)
+        return qqmusic::InvalidArgument;
+    out_name[0] = '\0';
+
+    const std::string key = CoverKeyFor(path);
+    if (key.empty())
+        return qqmusic::InvalidArgument;
+
+    const std::string cache_lrc = std::string("/qqmusic-cache/") + key + ".lrc";
+    if (sdmc::FileExists(cache_lrc.c_str())) {
+        snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
+        return 0;
+    }
+
+    // 1) 在线曲目：在线拉取标准 LRC 文本并缓存
+    if (strncmp(path, "qqm://", 6) == 0) {
+        std::string songmid = key;
+        std::string lrc;
+        if (qqmusic::api::GetSongLyric(songmid, lrc) && !lrc.empty()) {
+            sdmc::CreateFolder("/qqmusic-cache");
+            sdmc::WriteFile(cache_lrc.c_str(), lrc.data(), lrc.size());
+            snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
+            return 0;
+        }
+        return qqmusic::FileNotFound;
+    }
+
+    // 2) 本地曲目：检查同目录同名 .lrc 文件
+    std::string local_path(path);
+    auto dot = local_path.find_last_of('.');
+    if (dot != std::string::npos && dot != 0) {
+        local_path.resize(dot);
+        local_path += ".lrc";
+        if (sdmc::FileExists(local_path.c_str())) {
+            FsFile f;
+            if (R_SUCCEEDED(sdmc::OpenFile(&f, local_path.c_str(), FsOpenMode_Read))) {
+                s64 fsz = 0;
+                fsFileGetSize(&f, &fsz);
+                if (fsz > 0 && fsz < 256 * 1024) {
+                    std::string buf((size_t)fsz, '\0');
+                    u64 got = 0;
+                    fsFileRead(&f, 0, buf.data(), (u64)fsz, 0, &got);
+                    fsFileClose(&f);
+                    sdmc::CreateFolder("/qqmusic-cache");
+                    sdmc::WriteFile(cache_lrc.c_str(), buf.data(), buf.size());
+                    snprintf(out_name, out_name_size, "%s.lrc", key.c_str());
+                    return 0;
+                }
+                fsFileClose(&f);
+            }
+        }
+    }
+
+    return qqmusic::FileNotFound;
+}
+
 }

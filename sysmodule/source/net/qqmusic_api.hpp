@@ -52,5 +52,7 @@ namespace qqmusic::api {
     std::string GetSongPlayUrl(const std::string &songmid, const std::string &media_mid);
     // 歌曲所属专辑 MID（用于封面兜底：老队列/搜索结果的 qqm:// 路径可能缺 album_mid）。
     std::string GetSongAlbumMid(const std::string &songmid);
+    // 获取歌曲标准 LRC 歌词文本
+    bool GetSongLyric(const std::string &songmid, std::string &out_lrc);
 
 } // namespace qqmusic::api

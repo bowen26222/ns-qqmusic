@@ -91,6 +91,8 @@ Result qqmusicGetTrackMeta(u32 index, QqMusicTrackMeta *out);
 Result qqmusicGetPathMeta(const char *path, QqMusicTrackMeta *out);
 // 确保曲目封面已落盘到 /qqmusic-cache/<out_name>；返回后 out_name 为空串表示暂无封面。
 Result qqmusicEnsureCover(const char *path, char *out_name, u32 out_name_size);
+// 确保曲目歌词已落盘到 /qqmusic-cache/<out_name>（.lrc）；返回后 out_name 为空串表示暂无歌词。
+Result qqmusicEnsureLyric(const char *path, char *out_name, u32 out_name_size);
 Result qqmusicGetCurrentTrack(QqMusicCurrentTrack *out);
 Result qqmusicSetRepeatMode(u32 mode); // 0=关闭 1=单曲 2=列表
 Result qqmusicSetShuffleMode(u32 on);
