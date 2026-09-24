@@ -11,6 +11,7 @@
  */
 
 #include "nxExt/ipc_server.h"
+#include <stdio.h>
 #include <string.h>
 
 Result ipcServerInit(IpcServer* server, const char* name, u32 max_sessions)
@@ -84,49 +85,68 @@ static Result _ipcServerDeleteSession(IpcServer* server, u32 index)
 static Result _ipcServerParseRequest(IpcServerRequest* r)
 {
     u8* base = armGetTls();
+    HipcHeader hdr;
+    memcpy(&hdr, base, sizeof(hdr));
+    // Validate the layout before following any descriptor pointers.
+    if(hdr.has_special_header || hdr.num_send_statics || hdr.num_exch_buffers ||
+       hdr.recv_static_mode || hdr.num_send_buffers > 1 || hdr.num_recv_buffers > 1)
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    const size_t layoutSize = sizeof(HipcHeader) +
+        (hdr.num_send_buffers + hdr.num_recv_buffers) * sizeof(HipcBufferDescriptor) +
+        hdr.num_data_words * sizeof(u32);
+    if(layoutSize > 0x100)
+        return MAKERESULT(Module_Libnx, LibnxError_BadInput);
 
-    r->hipc = hipcParseRequest(base);
+    HipcParsedRequest hipc = hipcParseRequest(base);
+    r->type = hipc.meta.type;
     r->data.cmdId = 0;
     r->data.size = 0;
-    r->data.ptr =  NULL;
+    r->data.ptr = r->raw_data;
+    r->send_buffer = (IpcServerBuffer){0};
+    r->recv_buffer = (IpcServerBuffer){0};
 
-    if(r->hipc.meta.type == CmifCommandType_Request)
+    if(r->type == CmifCommandType_Request || r->type == CmifCommandType_Control)
     {
-        IpcServerRawHeader* header = cmifGetAlignedDataStart(r->hipc.data.data_words, base);
-        size_t dataSize = r->hipc.meta.num_data_words * 4;
-
-        if(!header || dataSize < sizeof(IpcServerRawHeader) || header->magic != CMIF_IN_HEADER_MAGIC)
-        {
+        const size_t rawSize = hipc.meta.num_data_words * sizeof(u32);
+        if(rawSize < sizeof(CmifInHeader) + 0x10)
             return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        CmifInHeader* header = cmifGetAlignedDataStart(hipc.data.data_words, base);
+        const size_t dataSize = rawSize - sizeof(CmifInHeader) - 0x10;
+        if(dataSize > sizeof(r->raw_data) || header->magic != CMIF_IN_HEADER_MAGIC ||
+           header->version != 0 || header->token != 0)
+            return MAKERESULT(Module_Libnx, LibnxError_BadInput);
+        r->data.cmdId = header->command_id;
+        r->data.size = dataSize;
+        memcpy(r->raw_data, header + 1, dataSize);
+        if(hipc.meta.num_send_buffers) {
+            r->send_buffer.ptr = hipcGetBufferAddress(hipc.data.send_buffers);
+            r->send_buffer.size = hipcGetBufferSize(hipc.data.send_buffers);
         }
-
-        r->data.cmdId = header->cmdId;
-        if(dataSize > sizeof(IpcServerRawHeader))
-        {
-            r->data.size = dataSize - sizeof(IpcServerRawHeader);
-            r->data.ptr = ((u8*)header) + sizeof(IpcServerRawHeader);
+        if(hipc.meta.num_recv_buffers) {
+            r->recv_buffer.ptr = hipcGetBufferAddress(hipc.data.recv_buffers);
+            r->recv_buffer.size = hipcGetBufferSize(hipc.data.recv_buffers);
         }
     }
-
     return 0;
 }
 
-static void _ipcServerPrepareResponse(Result rc, void* data, size_t dataSize)
+static void _ipcServerPrepareResponse(Result rc, const void* data, size_t dataSize)
 {
+    if(dataSize > IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE)
+        rc = MAKERESULT(Module_Libnx, LibnxError_BadInput);
+    if(R_FAILED(rc))
+        dataSize = 0;
+    const size_t rawSize = (sizeof(CmifOutHeader) + dataSize + 0x10 + 3) & ~(size_t)3;
     u8* base = armGetTls();
+    memset(base, 0, sizeof(HipcHeader) + rawSize);
     HipcRequest hipc = hipcMakeRequestInline(base,
         .type = CmifCommandType_Request,
-        .num_data_words = (sizeof(IpcServerRawHeader) + dataSize + 0x10) / 4,
+        .num_data_words = rawSize / sizeof(u32),
     );
-
-    IpcServerRawHeader* rawHeader = cmifGetAlignedDataStart(hipc.data_words, base);
-    rawHeader->magic = CMIF_OUT_HEADER_MAGIC;
-    rawHeader->result = rc;
-
-    if(R_SUCCEEDED(rc))
-    {
-        memcpy(((u8*)rawHeader) + sizeof(IpcServerRawHeader), data, dataSize);
-    }
+    CmifOutHeader* header = cmifGetAlignedDataStart(hipc.data_words, base);
+    *header = (CmifOutHeader){ .magic = CMIF_OUT_HEADER_MAGIC, .result = rc };
+    if(dataSize)
+        memcpy(header + 1, data, dataSize);
 }
 
 static Result _ipcServerProcessNewSession(IpcServer* server)
@@ -142,28 +162,58 @@ static Result _ipcServerProcessNewSession(IpcServer* server)
 
 static Result _ipcServerProcessSession(IpcServer* server, IpcServerRequestHandler handler, void* userdata, u32 handleIndex)
 {
+    extern void sysLog(const char *s);
+
     s32 unusedIndex;
     IpcServerRequest r;
     size_t dataSize = 0;
-    u8 data[IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE];
+    u64 data[IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE / sizeof(u64)];
     bool close = false;
 
     Result rc = svcReplyAndReceive(&unusedIndex, &server->handles[handleIndex], 1, 0, UINT64_MAX);
     if(R_SUCCEEDED(rc))
     {
         rc = _ipcServerParseRequest(&r);
+        if(R_FAILED(rc))
+        {
+            char b[64];
+            snprintf(b, sizeof(b), "SYS ipc parse fail rc=0x%08x\n", (unsigned) rc);
+            sysLog(b);
+        }
+    }
+    else
+    {
+        char b[64];
+        snprintf(b, sizeof(b), "SYS ipc wait fail rc=0x%08x idx=%u\n", (unsigned) rc, (unsigned) handleIndex);
+        sysLog(b);
     }
 
     if(R_SUCCEEDED(rc))
     {
-        switch(r.hipc.meta.type)
+        switch(r.type)
         {
             case CmifCommandType_Request:
-                _ipcServerPrepareResponse(
-                    handler(userdata, &r, data, &dataSize),
-                    data,
-                    dataSize
-                );
+                // C 不保证函数参数求值顺序：先完成 handler，再读取响应长度。
+                {
+                    Result handlerRc = handler(userdata, &r, (u8*)data, &dataSize);
+                    if(R_FAILED(handlerRc)) {
+                        char b[96];
+                        snprintf(b, sizeof(b), "SYS ipc cmd=0x%08x result=0x%08x bytes=%u\n",
+                                 (unsigned)r.data.cmdId, (unsigned)handlerRc, (unsigned)dataSize);
+                        // Avoid an SD flush on every successful UI status poll.
+                        sysLog(b);
+                    }
+                    _ipcServerPrepareResponse(handlerRc, data, dataSize);
+                }
+                break;
+            case CmifCommandType_Control:
+                // serviceCreate queries pointer capacity. This port uses MapAlias only.
+                if(r.data.cmdId == 3) {
+                    const u16 pointerSize = 0;
+                    _ipcServerPrepareResponse(0, &pointerSize, sizeof(pointerSize));
+                } else {
+                    _ipcServerPrepareResponse(MAKERESULT(Module_Libnx, LibnxError_BadInput), NULL, 0);
+                }
                 break;
             case CmifCommandType_Close:
                 _ipcServerPrepareResponse(0, NULL, 0);
@@ -179,11 +229,20 @@ static Result _ipcServerProcessSession(IpcServer* server, IpcServerRequestHandle
         {
             rc = 0;
         }
+        else if(R_FAILED(rc))
+        {
+            char b[64];
+            snprintf(b, sizeof(b), "SYS ipc reply fail rc=0x%08x\n", (unsigned) rc);
+            sysLog(b);
+        }
     }
 
     if(R_FAILED(rc) || close)
     {
         _ipcServerDeleteSession(server, handleIndex);
+        char b[64];
+        snprintf(b, sizeof(b), "SYS ipc session closed rc=0x%08x\n", (unsigned) rc);
+        sysLog(b);
     }
 
     return rc;

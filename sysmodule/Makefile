@@ -13,10 +13,11 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	qqmusic
 BUILD		:=	build
 # M1：source（主+服务）+ source/impl（播放引擎）+ ../common（sdmc/pm/config/minIni）
-SOURCES		:=	source source/impl source/impl/resamplers \
-			../common/sdmc ../common/pm ../common/config ../common/minIni
+SOURCES		:=	source source/net source/impl source/impl/resamplers \
+			../common/sdmc ../common/pm ../common/config ../common/minIni \
+			../common/cJSON ../common/qr
 DATA		:=
-INCLUDES	:=	../common ../common/ipc
+INCLUDES	:=	source source/net ../common ../common/ipc ../common/cJSON ../common/qr
 
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
@@ -29,9 +30,9 @@ CFLAGS	+=	$(INCLUDE) -DNDEBUG=1 -DWANT_MP3 -DWANT_FLAC -DWANT_WAV
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=c++20
 
 ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map) -Wl,--wrap=poll
 
-LIBS	:= -lnxExt -lmbedtls -lmbedx509 -lmbedcrypto -lnx
+LIBS	:= -lnxExt -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx
 
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(LIBNX) $(TOPDIR)/nxExt

@@ -17,9 +17,9 @@ void create_config_dir() {
     sdmc::CreateFolder("/config/qqmusic");
 }
 
-auto get_tid_str(u64 tid) -> const char* {
-    static char buf[21]{};
-    std::sprintf(buf, "%016lX", tid);
+auto get_tid_str(u64 tid) -> std::string {
+    char buf[24]{};
+    std::snprintf(buf, sizeof(buf), "%016llX", (unsigned long long)tid);
     return buf;
 }
 
@@ -53,16 +53,16 @@ void set_volume(float value) {
 }
 
 auto has_title_enabled(u64 tid) -> bool {
-    return ini_haskey("title", get_tid_str(tid), CONFIG_PATH);
+    return ini_haskey("title", get_tid_str(tid).c_str(), CONFIG_PATH);
 }
 
 auto get_title_enabled(u64 tid) -> bool {
-    return ini_getbool("title", get_tid_str(tid), true, CONFIG_PATH);
+    return ini_getbool("title", get_tid_str(tid).c_str(), true, CONFIG_PATH);
 }
 
 void set_title_enabled(u64 tid, bool value) {
     create_config_dir();
-    ini_putl("title", get_tid_str(tid), value, CONFIG_PATH);
+    ini_putl("title", get_tid_str(tid).c_str(), value, CONFIG_PATH);
 }
 
 auto get_title_enabled_default() -> bool {
@@ -75,16 +75,16 @@ void set_title_enabled_default(bool value) {
 }
 
 auto has_title_volume(u64 tid) -> bool {
-    return ini_haskey("volume", get_tid_str(tid), CONFIG_PATH);
+    return ini_haskey("volume", get_tid_str(tid).c_str(), CONFIG_PATH);
 }
 
 auto get_title_volume(u64 tid) -> float {
-    return ini_getf("volume", get_tid_str(tid), 1.f, CONFIG_PATH);
+    return ini_getf("volume", get_tid_str(tid).c_str(), 1.f, CONFIG_PATH);
 }
 
 void set_title_volume(u64 tid, float value) {
     create_config_dir();
-    ini_putf("volume", get_tid_str(tid), value, CONFIG_PATH);
+    ini_putf("volume", get_tid_str(tid).c_str(), value, CONFIG_PATH);
 }
 
 auto get_default_title_volume() -> float {
@@ -94,15 +94,6 @@ auto get_default_title_volume() -> float {
 void set_default_title_volume(float value) {
     create_config_dir();
     ini_putf("config", "global_volume", value, CONFIG_PATH);
-}
-
-auto get_load_path(char* out, int max_len) -> int {
-    return ini_gets("config", "load_path", "", out, max_len, CONFIG_PATH);
-}
-
-void set_load_path(const char* path) {
-    create_config_dir();
-    ini_puts("config", "load_path", path, CONFIG_PATH);
 }
 
 /* ---- Jellyfin sign-in (shared by overlay + sysmodule) ---- */
@@ -144,4 +135,49 @@ void set_seek_skip_seconds(int value) {
     ini_putl("config", "seek_skip_seconds", value, CONFIG_PATH);
 }
 
+auto get_queue_position() -> u32 {
+    return (u32)ini_getl("config", "queue_pos", 0, CONFIG_PATH);
 }
+
+void set_queue_position(u32 value) {
+    create_config_dir();
+    ini_putl("config", "queue_pos", (long)value, CONFIG_PATH);
+}
+
+// 注意：键名带 v2 —— 上一版的 sort_mode（1=最新在前、2=首字母）与现在的两档语义
+// （0=从新到旧、1=按字母）不兼容，沿用旧值会把「我喜欢」误判成按字母排序。
+auto get_sort_mode() -> int {
+    const int v = (int)ini_getl("config", "sort_mode_v2", 0, CONFIG_PATH);
+    return (v == 0 || v == 1) ? v : 0;
+}
+
+void set_sort_mode(int value) {
+    create_config_dir();
+    ini_putl("config", "sort_mode_v2", (long)(value ? 1 : 0), CONFIG_PATH);
+}
+
+auto get_cache_mode() -> int {
+    const int v = (int)ini_getl("config", "cache_mode", 1, CONFIG_PATH);
+    return (v == 0 || v == 1) ? v : 1;
+}
+
+void set_cache_mode(int value) {
+    create_config_dir();
+    ini_putl("config", "cache_mode", (long)(value ? 1 : 0), CONFIG_PATH);
+}
+
+auto get_cache_limit() -> int {
+    const int v = (int)ini_getl("config", "cache_limit", 20, CONFIG_PATH);
+    if (v < 1) return 1;
+    if (v > 2000) return 2000;
+    return v;
+}
+
+void set_cache_limit(int value) {
+    if (value < 1) value = 1;
+    if (value > 2000) value = 2000;
+    create_config_dir();
+    ini_putl("config", "cache_limit", (long)value, CONFIG_PATH);
+}
+
+} // namespace config

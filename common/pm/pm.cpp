@@ -47,5 +47,25 @@ auto PollCurrentPidTid(u64* pid_out, u64* tid_out) -> bool {
 
     return false;
 }
+// 仅报告"真实应用在前台"：启动器 applet（pminfo 返回 0x20f，即 QLauncher）
+// 与"无应用"都按 false 处理 —— 黑名单自动暂停在离开游戏后应解除。
+auto GetActiveApp(u64* pid_out, u64* tid_out) -> bool {
+    u64 pid = 0;
+    if (R_SUCCEEDED(pmdmntGetApplicationProcessId(&pid))) {
+        u64 tid = 0;
+        if (R_SUCCEEDED(pminfoGetProgramId(&tid, pid))) {
+            if (pid_out)
+                *pid_out = pid;
+            if (tid_out)
+                *tid_out = tid;
+            return true;
+        }
+    }
+    if (pid_out)
+        *pid_out = 0;
+    if (tid_out)
+        *tid_out = 0;
+    return false;
+}
 
 }

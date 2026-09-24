@@ -25,11 +25,11 @@ namespace qqmusic {
         Back,
     };
 
-    // 与 ipc/client.h 的 CurrentStats 字段一致（u32×3）。
     struct CurrentStats {
         u32 sample_rate;
         u32 current_frame;
         u32 total_frames;
+        u32 index;
     };
 
 }

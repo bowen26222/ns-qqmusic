@@ -14,12 +14,13 @@ APP_TITLE	:=	QQMusic
 
 TARGET		:=	qqmusic-overlay
 BUILD		:=	build
-SOURCES		:=	source ../common/ipc
+SOURCES		:=	source source/gui source/elm source/core ../common/ipc ../common/config ../common/minIni ../common/sdmc ../common/pm ../third_party/stb ../common/qr
 DATA		:=
-INCLUDES	:=	../common/ipc
-APP_VERSION	:=	$(VERSION)
+INCLUDES	:=	../common/ipc ../common source/gui source/elm source/core ../third_party/stb ../common/qr
+APP_VERSION	:=	0.1.0
+API_VERSION	:=	3
+APP_AUTHOR	:=	ns-qqmusic
 NO_ICON		:= 1
-NO_NACP		:= 1
 
 # libultrahand（libtesla + libultra）— 追加自身 SOURCES/INCLUDES
 include $(TOPDIR)/lib/ultrahand.mk
@@ -32,7 +33,8 @@ CFLAGS	:=	-g -Wall -Wno-format-truncation -O2 -ffunction-sections \
 CFLAGS	+=	$(INCLUDE) -DVERSION=\"v$(APP_VERSION)\" -DQQMUSIC_API_VERSION=$(API_VERSION) -DNDEBUG=1
 
 # libultrahand：per-overlay 配置目录
-CFLAGS	+=	-DUI_OVERRIDE_PATH="\"/config/qqmusic/\""
+# 音频格式（browser 白名单 + player 解码）
+CFLAGS	+=	-DWANT_MP3 -DWANT_FLAC -DWANT_WAV
 
 CXXFLAGS	:= $(CFLAGS) -fno-exceptions -fno-rtti -std=c++20
 
@@ -96,10 +98,10 @@ else
 DEPENDS	:=	$(OFILES:.o=.d)
 
 all	:	$(OUTPUT).ovl
-
-# Ultrahand 识别标记：elf2nro 之后追加 "ULTR"（WerWolv ovlloader 用 "WLOV"）
-$(OUTPUT).ovl	:	$(OUTPUT).elf
-	@elf2nro $< $@ $(NROFLAGS)
+# Ultrahand 菜单要求 ovl 内嵌 NACP（getOverlayInfo 解析失败会被静默跳过）；
+# elf2nro 之后追加 "ULTR" 识别标记（WerWolv ovlloader 用 "WLOV"）。
+$(OUTPUT).ovl	:	$(OUTPUT).elf $(OUTPUT).nacp
+	@elf2nro $< $@ $(NROFLAGS) --nacp=$(OUTPUT).nacp
 	@printf 'ULTR' >> $@
 	@echo "built ... $(notdir $(OUTPUT).ovl)"
 

@@ -12,8 +12,14 @@ namespace qqmusic::impl {
     void TuneThreadFunc(void *);
     void GpioThreadFunc(void *);
     void PmdmntThreadFunc(void *);
-
+    void SetTitleEnabled(u64 tid, bool enabled);
+    void SetTitleEnabledDefault(bool enabled);
     bool GetStatus();
+    bool GetAudioUnavailable();
+    bool GetBlacklistPaused();
+    bool GetLastPlayError();
+    bool GetRadioMode();
+    void SetRadioMode(bool enabled);
     void Play();
     void Pause();
     void Next();
@@ -25,11 +31,6 @@ namespace qqmusic::impl {
     void SetTitleVolume(float volume);
     float GetDefaultTitleVolume();
     void SetDefaultTitleVolume(float volume);
-
-    void TitlePlay();
-    void TitlePause();
-    void DefaultTitlePlay();
-    void DefaultTitlePause();
 
     RepeatMode GetRepeatMode();
     void SetRepeatMode(RepeatMode mode);
@@ -44,7 +45,8 @@ namespace qqmusic::impl {
     void Select(u32 index);
     void Seek(u32 position);
 
-    Result Enqueue(const char* buffer, size_t buffer_length, EnqueueType type);
+    Result Enqueue(const char* buffer, size_t buffer_length, EnqueueType type, bool save = true);
+    void SaveQueue();
     Result Remove(u32 index);
 
 }

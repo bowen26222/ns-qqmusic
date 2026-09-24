@@ -1,5 +1,6 @@
 #include "source.hpp"
 
+#include "songcache.hpp"
 #include "sdmc/sdmc.hpp"
 
 #include <cstring>
@@ -8,6 +9,11 @@
 #include <cstdlib>
 #include <string>
 
+#include <sys/select.h>
+#include <curl/curl.h>
+#include "net/http.hpp"
+#include "net/qqmusic_api.hpp"
+extern "C" void sysLog(const char *s);
 // ----- byte backends behind Source -----
 namespace {
 
@@ -29,9 +35,148 @@ namespace {
     };
 
 
+    class HttpBackend final : public IoBackend {
+        std::string m_url;
+        s64 m_total_size = 0;
+        CURL *m_curl = nullptr;
+        const SourceIoRequest &m_request;
+
+        static int ProgressCb(void *userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+            return static_cast<HttpBackend *>(userdata)->m_request.Cancelled() ? 1 : 0;
+        }
+
+        struct WriteContext {
+            u8 *dst;
+            u64 max_bytes;
+            u64 written;
+        };
+
+        static size_t WriteCb(void *ptr, size_t size, size_t nmemb, void *userdata) {
+            auto *ctx = static_cast<WriteContext *>(userdata);
+            size_t total = size * nmemb;
+            size_t to_copy = std::min<size_t>(total, ctx->max_bytes - ctx->written);
+            if (to_copy > 0) {
+                std::memcpy(ctx->dst + ctx->written, ptr, to_copy);
+                ctx->written += to_copy;
+            }
+            return total;
+        }
+        static size_t HeaderCb(char *buffer, size_t size, size_t nitems, void *userdata) {
+            size_t total = size * nitems;
+            auto *self = static_cast<HttpBackend *>(userdata);
+            std::string line(buffer, total);
+            auto p = line.find("Content-Range:");
+            if (p == std::string::npos) p = line.find("content-range:");
+            if (p != std::string::npos) {
+                auto slash = line.find('/', p);
+                if (slash != std::string::npos) {
+                    s64 sz = std::atoll(line.c_str() + slash + 1);
+                    if (sz > 0) self->m_total_size = sz;
+                }
+            }
+            return total;
+        }
+
+      public:
+        HttpBackend(const std::string &url, const SourceIoRequest &request) : m_url(url), m_request(request) {
+            if (m_request.Cancelled()) return;
+            qqmusic::net::Init();
+            m_curl = curl_easy_init();
+            if (m_curl) {
+                curl_easy_setopt(m_curl, CURLOPT_URL, m_url.c_str());
+                curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYPEER, 0L);
+                curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYHOST, 0L);
+                curl_easy_setopt(m_curl, CURLOPT_FOLLOWLOCATION, 1L);
+                // 强制 HTTP/1.1：与播放线程栈预算匹配（见 main.cpp 播放线程栈说明）。
+                curl_easy_setopt(m_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+                // 掌机弱网环境连接建立放宽至 10s
+                curl_easy_setopt(m_curl, CURLOPT_CONNECTTIMEOUT, 10L);
+                curl_easy_setopt(m_curl, CURLOPT_TIMEOUT, 20L);
+                curl_easy_setopt(m_curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+                curl_easy_setopt(m_curl, CURLOPT_REFERER, "https://y.qq.com/");
+                curl_easy_setopt(m_curl, CURLOPT_TCP_KEEPALIVE, 1L);
+                curl_easy_setopt(m_curl, CURLOPT_TCP_KEEPIDLE, 30L);
+                curl_easy_setopt(m_curl, CURLOPT_TCP_KEEPINTVL, 15L);
+                curl_easy_setopt(m_curl, CURLOPT_NOPROGRESS, 0L);
+                curl_easy_setopt(m_curl, CURLOPT_XFERINFOFUNCTION, ProgressCb);
+                curl_easy_setopt(m_curl, CURLOPT_XFERINFODATA, this);
+
+                u8 dummy = 0;
+                WriteContext dummy_ctx{ &dummy, 1, 0 };
+                curl_easy_setopt(m_curl, CURLOPT_RANGE, "0-0");
+                curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, WriteCb);
+                curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &dummy_ctx);
+                curl_easy_setopt(m_curl, CURLOPT_HEADERFUNCTION, HeaderCb);
+                curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, this);
+                CURLcode res = curl_easy_perform(m_curl);
+                if (res != CURLE_OK && !m_request.Cancelled()) {
+                    svcSleepThread(200'000'000ull);
+                    if (!m_request.Cancelled())
+                        res = curl_easy_perform(m_curl);
+                }
+                curl_easy_setopt(m_curl, CURLOPT_HEADERFUNCTION, nullptr);
+                curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, nullptr);
+
+                if (m_total_size == 0) {
+                    curl_off_t cl = 0;
+                    curl_easy_getinfo(m_curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &cl);
+                    if (cl > 0) m_total_size = cl;
+                }
+                char b[128];
+                std::snprintf(b, sizeof(b), "SYS HttpBackend init: res=%d size=%lld\n", (int)res, (long long)m_total_size);
+                sysLog(b);
+            }
+        }
+
+        ~HttpBackend() override {
+            if (m_curl) {
+                curl_easy_cleanup(m_curl);
+                m_curl = nullptr;
+            }
+        }
+
+        u64 read(s64 offset, void *buf, u64 size) override {
+            if (!m_curl || size == 0 || m_request.Cancelled()) return 0;
+            if (m_total_size > 0 && offset >= m_total_size) return 0;
+
+            s64 end_byte = offset + size - 1;
+            if (m_total_size > 0 && end_byte >= m_total_size) {
+                end_byte = m_total_size - 1;
+            }
+            if (end_byte < offset) return 0;
+
+            char range_hdr[64];
+            std::snprintf(range_hdr, sizeof(range_hdr), "%lld-%lld", (long long)offset, (long long)end_byte);
+            // 弱网抗掉包重试：单个音频分段若因 WiFi 瞬时掉包失败，最多重试 3 次（带渐进等待），
+            // 绝不因单个 TCP 分段失败将正在播放的歌曲判定为 EOF 强行截断。
+            for (int attempt = 0; attempt < 3; ++attempt) {
+                WriteContext ctx{ static_cast<u8 *>(buf), size, 0 };
+                curl_easy_setopt(m_curl, CURLOPT_RANGE, range_hdr);
+                curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, WriteCb);
+                curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &ctx);
+
+                CURLcode res = curl_easy_perform(m_curl);
+                if (m_request.Cancelled()) return 0;
+                if (ctx.written > 0) return ctx.written;
+                if (res == CURLE_OK) return 0; // 真正的正常 EOF
+
+                svcSleepThread(150'000'000ull * (attempt + 1));
+                if (m_request.Cancelled()) return 0;
+            }
+            return 0;
+        }
+        s64 size() override {
+            return m_total_size;
+        }
+    };
+
+
 }
 
 std::unique_ptr<IoBackend> MakeFileBackend(FsFile &&file) { return std::make_unique<FileBackend>(std::move(file)); }
+std::unique_ptr<IoBackend> MakeHttpBackend(const std::string &url, const SourceIoRequest &request) {
+    return std::make_unique<HttpBackend>(url, request);
+}
 // NOTE: when updating dr_libs, check for TUNE-FIX comment for patches.
 #ifdef WANT_FLAC
 #define DR_FLAC_IMPLEMENTATION
@@ -255,17 +400,23 @@ size_t Source::ReadFile(void *_buffer, size_t read_size) {
                 m_buffered.size = max_advance;
                 std::memcpy(m_buffered.data, dst - max_advance, max_advance);
             }
-        } else if ((bytes_read = this->m_backend->read(this->m_offset, m_buffered.data, sizeof(m_buffered.data))) != 0) {
-            const auto max_advance = std::min(read_size, bytes_read);
-            std::memcpy(dst, m_buffered.data, max_advance);
+        } else {
+            // A cancelled transfer can overwrite part of this storage before
+            // returning zero. Its old range must not remain readable on seek.
+            m_buffered.size = 0;
+            bytes_read = this->m_backend->read(this->m_offset, m_buffered.data, sizeof(m_buffered.data));
+            if (bytes_read) {
+                const auto max_advance = std::min(read_size, bytes_read);
+                std::memcpy(dst, m_buffered.data, max_advance);
 
-            m_buffered.off = m_offset;
-            m_buffered.size = bytes_read;
+                m_buffered.off = m_offset;
+                m_buffered.size = bytes_read;
 
-            read_size -= max_advance;
-            m_offset += max_advance;
-            amount += max_advance;
-            dst += max_advance;
+                read_size -= max_advance;
+                m_offset += max_advance;
+                amount += max_advance;
+                dst += max_advance;
+            }
         }
     }
 
@@ -314,6 +465,10 @@ class FlacFile final : public Source {
   public:
     FlacFile(std::unique_ptr<IoBackend> backend) : Source(std::move(backend)) {
         this->m_flac = drflac_open(ReadCallback, FlacSeekCallback, FlacTellCallback, this, flac_alloc_ptr);
+        if (this->m_flac && (this->m_flac->channels == 0 || this->m_flac->sampleRate == 0)) {
+            drflac_close(this->m_flac);
+            this->m_flac = nullptr;
+        }
     }
     ~FlacFile() {
         if (this->m_flac != nullptr)
@@ -356,14 +511,25 @@ class FlacFile final : public Source {
 class Mp3File final : public Source {
   private:
     drmp3 m_mp3;
-    bool initialized;
+    bool initialized = false;
     u64 m_total_frame_count;
 
   public:
     Mp3File(std::unique_ptr<IoBackend> backend) : Source(std::move(backend)) {
         if (drmp3_init(&this->m_mp3, ReadCallback, Mp3SeekCallback, Mp3TellCallback, nullptr, this, mp3_alloc_ptr)) {
-            this->m_total_frame_count = drmp3_get_pcm_frame_count(&this->m_mp3);
-            this->initialized         = true;
+            if (this->m_mp3.channels == 0 || this->m_mp3.sampleRate == 0) {
+                drmp3_uninit(&this->m_mp3);
+                return;
+            }
+            if (this->m_mp3.totalPCMFrameCount != DRMP3_UINT64_MAX) {
+                this->m_total_frame_count = drmp3_get_pcm_frame_count(&this->m_mp3);
+            } else if (this->GetFileSize() > 0 && this->m_mp3.sampleRate > 0) {
+                u64 seconds = (this->GetFileSize() * 8) / 128000;
+                this->m_total_frame_count = seconds * this->m_mp3.sampleRate;
+            } else {
+                this->m_total_frame_count = drmp3_get_pcm_frame_count(&this->m_mp3);
+            }
+            this->initialized = true;
         }
     }
     ~Mp3File() {
@@ -407,13 +573,17 @@ class Mp3File final : public Source {
 class WavFile final : public Source {
   private:
     drwav m_wav;
-    bool initialized;
+    bool initialized = false;
     s32 m_bytes_per_pcm;
 
   public:
     WavFile(std::unique_ptr<IoBackend> backend) : Source(std::move(backend)) {
         if (drwav_init(&this->m_wav, ReadCallback, WavSeekCallback, WavTellCallback, this, wav_alloc_ptr)) {
             this->m_bytes_per_pcm = drwav_get_bytes_per_pcm_frame(&this->m_wav);
+            if (this->m_wav.channels == 0 || this->m_wav.sampleRate == 0 || this->m_bytes_per_pcm <= 0) {
+                drwav_uninit(&this->m_wav);
+                return;
+            }
             this->initialized     = true;
         }
     }
@@ -435,6 +605,8 @@ class WavFile final : public Source {
     std::pair<u32, u32> Tell() override {
         std::scoped_lock lk(this->m_mutex);
 
+        if (this->m_bytes_per_pcm <= 0)
+            return {0, 0};
         u64 byte_position = this->m_wav.dataChunkDataSize - this->m_wav.bytesRemaining;
         return {byte_position / this->m_bytes_per_pcm, this->m_wav.totalPCMFrameCount};
     }
@@ -473,7 +645,75 @@ namespace {
     }
 }
 
-std::unique_ptr<Source> OpenFile(const char *path) {
+std::unique_ptr<Source> OpenFile(const char *path, const SourceIoRequest &request) {
+    if (!path || request.Cancelled()) return nullptr;
+
+    if (std::strncmp(path, "qqm://", 6) == 0) {
+        std::string s(path + 6);
+        std::string songmid, media_mid;
+        auto s1 = s.find('/');
+        if (s1 != std::string::npos) {
+            songmid = s.substr(0, s1);
+            auto s2 = s.find('/', s1 + 1);
+            if (s2 != std::string::npos) {
+                media_mid = s.substr(s1 + 1, s2 - (s1 + 1));
+            } else {
+                media_mid = s.substr(s1 + 1);
+            }
+        } else {
+            songmid = s;
+            media_mid = s;
+        }
+        if (media_mid.empty()) media_mid = songmid;
+        std::string play_url = qqmusic::api::GetSongPlayUrl(songmid, media_mid);
+        if (play_url.empty() && !request.Cancelled()) {
+            svcSleepThread(250'000'000ull);
+            if (!request.Cancelled())
+                play_url = qqmusic::api::GetSongPlayUrl(songmid, media_mid);
+        }
+        if (request.Cancelled()) return nullptr;
+        if (play_url.empty()) {
+            char b[128];
+            std::snprintf(b, sizeof(b), "SYS OpenFile GetSongPlayUrl empty: %s\n", songmid.c_str());
+            sysLog(b);
+            return nullptr;
+        }
+
+        // 1) 本地缓存优先：命中则完全不联网（断网可放，且没有网络抖动导致的断流）。
+        std::string cached;
+        if (qqmusic::songcache::Lookup(songmid, cached)) {
+            FsFile cached_file;
+            if (R_SUCCEEDED(sdmc::OpenFile(&cached_file, cached.c_str()))) {
+                const std::string msg = "SYS OpenFile cache hit: " + songmid + "\n";
+                sysLog(msg.c_str());
+                return make_decoder(SourceType::MP3, MakeFileBackend(std::move(cached_file)));
+            }
+        }
+
+        // 2) 未命中：边下边存，听完自动落盘，下次播放即走本地。
+        auto backend = qqmusic::songcache::MakeCachingBackend(MakeHttpBackend(play_url, request), songmid);
+        if ((!backend || backend->size() == 0) && !request.Cancelled()) {
+            svcSleepThread(250'000'000ull);
+            if (!request.Cancelled())
+                backend = qqmusic::songcache::MakeCachingBackend(MakeHttpBackend(play_url, request), songmid);
+        }
+        if (request.Cancelled() || !backend || backend->size() == 0) {
+            char b[128];
+            std::snprintf(b, sizeof(b), "SYS OpenFile backend size 0 for: %s\n", songmid.c_str());
+            sysLog(b);
+            return nullptr;
+        }
+        return make_decoder(SourceType::MP3, std::move(backend));
+    }
+
+    if (std::strncmp(path, "http://", 7) == 0 || std::strncmp(path, "https://", 8) == 0) {
+        auto backend = MakeHttpBackend(path, request);
+        if (request.Cancelled() || !backend || backend->size() == 0) return nullptr;
+        auto type = GetSourceType(path);
+        if (type == SourceType::NONE) type = SourceType::MP3;
+        return make_decoder(type, std::move(backend));
+    }
+
     const auto type = GetSourceType(path);
     if (type == SourceType::NONE)
         return nullptr;
@@ -482,13 +722,15 @@ std::unique_ptr<Source> OpenFile(const char *path) {
     if (R_FAILED(sdmc::OpenFile(&file, path)))
         return nullptr;
 
-    // backend takes ownership of the file (closes it in its dtor).
     return make_decoder(type, MakeFileBackend(std::move(file)));
 }
 
 
 SourceType GetSourceType(const char* path) {
-    // M3 起在线曲目走 "qqm://" scheme，届时在此扩展。
+    if (!path) return SourceType::NONE;
+    if (std::strncmp(path, "qqm://", 6) == 0) {
+        return SourceType::MP3;
+    }
 
     const auto ext = std::strrchr(path, '.');
     if (!ext) {

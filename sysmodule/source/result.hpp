@@ -15,7 +15,10 @@ namespace qqmusic {
     constexpr const Result FileOpenFailure  = MAKERESULT(Module, 20);
     constexpr const Result VoiceInitFailure = MAKERESULT(Module, 21);
     constexpr const Result OutOfMemory      = MAKERESULT(Module, 30);
-    constexpr const Result Generic          = MAKERESULT(Module, 40);
+    constexpr const Result AudioUnavailable = MAKERESULT(Module, 22);
+    // 在线接口：把「服务端没答上来（网络/拒绝）」与「答了但这一页为空」区分开，
+    // IPC 层据此返回错误而不是 0 条成功——否则界面只能显示「没有更多内容」。
+    constexpr const Result OnlineRequestFailed = MAKERESULT(Module, 40);
 
 }
 
@@ -33,9 +36,11 @@ namespace qqmusic {
             return temp_res;              \
     })
 
+#ifndef R_ABORT_UNLESS
 #define R_ABORT_UNLESS(res_expr)   \
     ({                             \
         auto tmp_res = (res_expr); \
         if (R_FAILED(tmp_res))     \
             diagAbortWithResult(tmp_res);   \
     })
+#endif

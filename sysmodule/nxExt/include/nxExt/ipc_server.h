@@ -19,17 +19,15 @@ extern "C"
 
 #include <switch.h>
 
-#define IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE (0x100 - 0x10 - sizeof(IpcServerRawHeader))
+// Horizon 的 TLS IPC 命令区只有 0x100 字节；HIPC + CMIF + 对齐占 0x28。
+// 路径、元数据及封面必须通过 MapAlias 缓冲区传输。
+#define IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE (0xD8)
 
 typedef struct
 {
-    u64 magic;
-    union
-    {
-        u64 cmdId;
-        u64 result;
-    };
-} IpcServerRawHeader;
+    void* ptr;
+    size_t size;
+} IpcServerBuffer;
 
 typedef struct
 {
@@ -48,8 +46,12 @@ typedef struct
 
 typedef struct
 {
-    HipcParsedRequest hipc;
+    u32 type;
     IpcServerRequestData data;
+    IpcServerBuffer send_buffer;
+    IpcServerBuffer recv_buffer;
+    // Handler 内调用其他服务会覆盖 TLS，连同标量请求一起在调用前保存。
+    u64 raw_data[IPC_SERVER_EXT_RESPONSE_MAX_DATA_SIZE / sizeof(u64)];
 } IpcServerRequest;
 
 typedef Result (*IpcServerRequestHandler)(void* userdata, const IpcServerRequest* r, u8* out_data, size_t* out_dataSize);

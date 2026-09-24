@@ -34,10 +34,6 @@ void set_title_volume(u64 tid, float value);
 auto get_default_title_volume() -> float;
 void set_default_title_volume(float value);
 
-// returns the length of the string
-auto get_load_path(char* out, int max_len) -> int;
-void set_load_path(const char* path);
-
 // Jellyfin sign-in (shared by overlay + sysmodule). get_* return string length.
 auto get_jelly_server(char* out, int max_len) -> int;   // "host:port"
 void set_jelly_server(const char* value);
@@ -50,4 +46,18 @@ void set_jelly_userid(const char* value);
 auto get_seek_skip_seconds() -> int;
 void set_seek_skip_seconds(int value);
 
+// Playback queue position
+auto get_queue_position() -> u32;
+void set_queue_position(u32 value);
+
+// Online list sort mode: 0=默认(从新到旧) 1=按字母(A-Z)
+auto get_sort_mode() -> int;
+void set_sort_mode(int value);
+
+// 在线缓存容量策略：0=跟随播放队列（队列有多少首就缓存多少首）1=指定数量
+auto get_cache_mode() -> int;
+void set_cache_mode(int value);
+// 指定数量模式下的上限（1..2000，默认 20）
+auto get_cache_limit() -> int;
+void set_cache_limit(int value);
 }
