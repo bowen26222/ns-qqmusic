@@ -345,7 +345,13 @@ void LyricGui::update() {
     // 歌词随帧刷新由 LyricElement::draw 驱动
 }
 
-bool LyricGui::handleInput(u64 keysDown, u64, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
+bool LyricGui::handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
+    const bool isStickL = (keysDown & HidNpadButton_StickL) || (keysHeld & HidNpadButton_StickL);
+    const bool isStickR = (keysDown & HidNpadButton_StickR) || (keysHeld & HidNpadButton_StickR);
+    if (isStickL && isStickR) {
+        tsl::changeTo<MainGui>();
+        return true;
+    }
     if (keysDown & HidNpadButton_B) {
         tsl::goBack();
         return true;
@@ -461,7 +467,8 @@ namespace {
                 line_text = l.text.empty() ? "(音乐过门)" : l.text;
             }
 
-            renderer->drawString(line_text.c_str(), false, pill_x + 40, pill_y + 30, 19, tsl::Color{0xF, 0xF, 0xF, 0xF}, pill_w - 50);
+            renderer->drawString(line_text.c_str(), false, pill_x + 40, pill_y + 30, 18, tsl::Color{0xF, 0xF, 0xF, 0xF}, pill_w - 110);
+            renderer->drawString("L3+R3", false, pill_x + pill_w - 55, pill_y + 30, 13, tsl::Color{0x7, 0x8, 0x9, 0xF});
         }
         void layout(u16 parentX, u16 parentY, u16 parentWidth, u16 parentHeight) override {
             setBoundaries(parentX, parentY, parentWidth, parentHeight);
@@ -507,10 +514,13 @@ tsl::elm::Element *OsdLyricGui::createUI() {
 void OsdLyricGui::update() {
 }
 
-bool OsdLyricGui::handleInput(u64 keysDown, u64, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
-    if (keysDown & (HidNpadButton_B | HidNpadButton_X)) {
+bool OsdLyricGui::handleInput(u64 keysDown, u64 keysHeld, const HidTouchState &, HidAnalogStickState, HidAnalogStickState) {
+    const bool isStickL = (keysDown & HidNpadButton_StickL) || (keysHeld & HidNpadButton_StickL);
+    const bool isStickR = (keysDown & HidNpadButton_StickR) || (keysHeld & HidNpadButton_StickR);
+    if (isStickL && isStickR) {
         tsl::changeTo<MainGui>();
         return true;
     }
+    // OSD 悬浮模式下绝不拦截 B 键，100% 留给游戏控制（跳跃/攻击/取消），绝不冲突卡死！
     return false;
 }
